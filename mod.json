@@ -1,0 +1,12 @@
+{
+    "name": "mods/alomare/true_intel",
+    "guid": "cadee2bf-d555-4298-a79d-034f4bafac5b",
+    "displayName": "True Intel",
+    "entry": "true_intel.lua",
+    "version": "1",
+    "description": "Reveals what the game hides or misstates: the real numbers behind the Armory's armor passive descriptions.",
+    "requires": [
+        "Bingus Shared Loader v17 or newer",
+        "HD2Runtime 0.31.2 or newer"
+    ]
+}

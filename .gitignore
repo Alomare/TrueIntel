@@ -1,0 +1,6 @@
+# Release builds and the Nexus page text
+build/
+nexus_description.txt
+__pycache__/
+# Live test checklists (local only)
+TESTING.md

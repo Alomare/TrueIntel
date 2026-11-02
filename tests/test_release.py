@@ -10,6 +10,7 @@ Bindings Menu are present, to show the mod registers nothing with them. The scri
 
 Run from the workspace root:  python -B mods/TrueIntel/tests/test_release.py
 """
+import re
 import struct
 import sys
 import tempfile
@@ -24,9 +25,13 @@ sys.path.insert(0, str(MOD / 'research'))
 from entry import entry_text  # noqa: E402
 import lines as research  # noqa: E402
 import signatures  # noqa: E402
+import tips as tips_research  # noqa: E402
 import sigspec  # noqa: E402
 
 SOURCE = entry_text(MOD, 'true_intel.lua')
+VERSION = SOURCE.split("local M = {version = '", 1)[1].split("'", 1)[0]
+RECON = 'recon' in VERSION  # a recon build has the operation probe and its test key (Mark)
+MARK_ID = 'alomare.true_stats.mark'
 DUMP = (ROOT / '_research' / 'game_25480438.dll').read_bytes()
 STRINGS = research.load_strings()
 LOCALES = research.load_locales()
@@ -92,6 +97,9 @@ local k32 = {
         local a = tonumber(ffi.cast('uint64_t', addr))
         local bytes = ffi.string(buffer, tonumber(size))
         if fake.refuse_writes then return 0 end
+        for page = a - a % 4096, a + #bytes - 1, 4096 do
+            if fake.readonly_page(page) and not fake.unlocked[page] then return 0 end
+        end
         if a >= BASE and a + #bytes <= BASE + #image then
             patches[#patches + 1] = {a, bytes}
         elseif not poke(a, bytes) then
@@ -101,7 +109,49 @@ local k32 = {
         fake.write_log[#fake.write_log + 1] = a
         got[0] = #bytes; return 1
     end,
+    -- game.dll's read-only sections (fake.readonly: {{lo, hi}}, from the dump's headers) are PAGE_READONLY until
+    -- VirtualProtect makes a page read-write (fake.unlocked); everything else is read-write.
+    VirtualQuery = function(addr, info, size)
+        local page = tonumber(ffi.cast('uint64_t', addr))
+        page = page - page % 4096
+        info.state = 0x1000
+        info.protect = (fake.readonly_page(page) and not fake.unlocked[page]) and 0x02 or 0x04
+        return 48
+    end,
+    VirtualProtect = function(addr, size, protect, old)
+        local page = tonumber(ffi.cast('uint64_t', addr))
+        page = page - page % 4096
+        old[0] = (fake.readonly_page(page) and not fake.unlocked[page]) and 0x02 or 0x04
+        if fake.readonly_page(page) then fake.unlocked[page] = protect == 0x04 or nil end
+        fake.protects = (fake.protects or 0) + 1
+        return 1
+    end,
+    GetLastError = function() return 5 end,
 }
+fake.readonly, fake.unlocked = {}, {}
+fake.readonly_page = function(page)
+    for _, r in ipairs(fake.readonly) do
+        if page >= r[1] and page < r[2] then return true end
+    end
+    return false
+end
+-- The game's label functions (set_label 0x143BF90, set_string_arg 0x143C950) as the card calls them through
+-- ffi.cast: they write the label's text id (+0x110) and its argument {key, type 1, the string's pointer} (+0x118,
+-- count +0x268) into the fake heap; fake.calls lists them, fake.card_text is the last string.
+fake.calls = {}
+local NATIVE = {[0x143BF90] = function(w, id)
+                    w = tonumber(w)
+                    fake.calls[#fake.calls + 1] = string.format('set_label %X %08X', w, id)
+                    poke(w + 0x110, real_ffi.string(real_ffi.new('uint32_t[1]', id), 4))
+                end,
+                [0x143C950] = function(w, key, text)
+                    w = tonumber(w)
+                    fake.card_text = real_ffi.string(text)
+                    fake.calls[#fake.calls + 1] = string.format('set_string_arg %X %08X', w, key)
+                    local rec = real_ffi.new('uint32_t[6]', key, 1, 0x12345678, 0, 0, 0)
+                    poke(w + 0x118, real_ffi.string(rec, 24))
+                    poke(w + 0x268, '\1')
+                end}
 -- kernel32 as FFI sees it (One Click Armor Set's harness): a call goes through the C declaration of the name it is
 -- made by (every addon shares one FFI namespace, which keeps a name's first declaration; a later ffi.cdef of it
 -- fails), so its arguments are converted, or refused, as in the game; the stand-in is called back through that
@@ -120,7 +170,14 @@ local kernel32 = setmetatable({}, {__index = function(_, name)
     callbacks[name] = callbacks[name] or real_ffi.cast(d.type, assert(k32[d.symbol], 'no stand-in for ' .. d.symbol))
     return callbacks[name]
 end})
-package.loaded.ffi = setmetatable({load = function() return kernel32 end, cdef = cdef}, {__index = real_ffi})
+local function cast(ct, v)
+    if type(ct) == 'string' and ct:find('(*)', 1, true) then
+        return assert(NATIVE[tonumber(real_ffi.cast('uint64_t', v)) - BASE], 'unexpected native function cast')
+    end
+    return real_ffi.cast(ct, v)
+end
+package.loaded.ffi = setmetatable({load = function() return kernel32 end, cdef = cdef, cast = cast},
+                                  {__index = real_ffi})
 -- Another mod loaded first declared kernel32's functions under their own names, with other types (One Click Armor
 -- Set V3's case: a player's log, 2026-10-10).
 for _, decl in ipairs({'uintptr_t GetCurrentProcess(void);', 'uintptr_t GetModuleHandleA(const char *name);',
@@ -132,18 +189,33 @@ for _, decl in ipairs({'uintptr_t GetCurrentProcess(void);', 'uintptr_t GetModul
 end
 fake.declared = declared
 
--- The menus: present, and nothing may register with them.
+-- The menus: present; nothing may register with them but a recon build's test key. fake.refuse_binding: the binding
+-- is refused (no free action, as in 1-recon-1) and is_down answers false; fake.mark_down: the binding is down.
 fake.specs, fake.bound = {}, {}
 ModOptionsMenu = {api = 1, register_option = function(id, spec) fake.specs[#fake.specs + 1] = id; return true end,
                   get = function() end, set = function() end, on_change = function() end}
-ModBindingsMenu = {api = 1, register_binding = function(id) fake.bound[#fake.bound + 1] = id; return true end,
-                   is_down = function() return false end}
+ModBindingsMenu = {api = 1, register_binding = function(id)
+                       fake.bound[#fake.bound + 1] = id
+                       if fake.refuse_binding then return false, 'no free action' end
+                       return true
+                   end,
+                   is_down = function() if fake.refuse_binding then return false end; return fake.mark_down == true end}
+-- The engine's keyboard: F6 held while fake.f6.
+stingray = {Keyboard = {button_id = function(name) return name == 'f6' and 66 or nil end,
+                        button = function(id) return (id == 66 and fake.f6) and 1 or 0 end}}
 
 -- HD2Runtime: the main module, its development text module (handles: text id = 0xC0000000 + order, the value checked
 -- as HD2Runtime checks it: a table {default = text, <game language> = text}; ensure registers the one table,
 -- fake.texts.refuse = {code, reason} refuses; resolves: NOT_REGISTERED once fake.texts.registered is false, a language
 -- change) and the write adapter.
 local hd2 = {version = '0.40.0'}
+-- hd2.text.game(id): the game's text by id (fake.names, the English strings the test gives), else NO_TEXT.
+fake.names = {}
+hd2.text = {game = function(id)
+    local s = fake.names[id]
+    if s then return s, 'us' end
+    return nil, 'NO_TEXT', 'no game table holds the text'
+end}
 package.preload['mods/skyeshade/hd2runtime'] = function() if fake.no_runtime then error('module not found') end
     return hd2 end
 local CODES = {}
@@ -260,10 +332,24 @@ def rows_snapshot(lua, at, recs):
     return out
 
 
+def readonly_sections():
+    """The dump's sections without the write flag, as {lo, hi} fake addresses."""
+    pe = struct.unpack_from('<I', DUMP, 0x3C)[0]
+    count, opt = struct.unpack_from('<H', DUMP, pe + 6)[0], struct.unpack_from('<H', DUMP, pe + 20)[0]
+    out = []
+    for i in range(count):
+        h = pe + 24 + opt + i * 40
+        size, rva = struct.unpack_from('<II', DUMP, h + 8)
+        if not struct.unpack_from('<I', DUMP, h + 36)[0] & 0x80000000:
+            out.append('{%d, %d}' % (BASE + rva, BASE + rva + size))
+    return '{' + ', '.join(out) + '}'
+
+
 def new_run():
     lua = LuaRuntime(unpack_returned_tuples=True)
     logdir = Path(tempfile.mkdtemp(prefix='ts_test_'))
     lua.execute(HARNESS, str(logdir), DUMP)
+    lua.execute('fake.readonly = ' + readonly_sections())
     return lua, logdir
 
 
@@ -295,6 +381,250 @@ RELOAD, ARMOR, JOG, SPRINT, KNOCK, STAMINA, ERGO = 0xB4F88129, 0xAFAE3B47, 0xCD7
 NBSP = ' '
 
 
+# The operation probe's fake mission board (2-recon-1): the board global (0x347CEE8) -> the board on the fake heap,
+# with its operation records (110 of 0x5C at +0xF7280), mission rows (0x4C each at +0xF9A10, count at +0xF9A10 +
+# 0x61F8), the selected operation (+0x17A2A0) and the map descriptor (+0x4168D0); the UI global (0x347CE28) -> the
+# presenter stack (+0x4288: stack +0x14, depth +0x28). The mission definitions are the dump's own (filled at start-up).
+BOARD, UI = 0x30000000, 0x31000000
+DEFS, DEF_SIZE = 0x3773420, 0x380
+
+
+def def_names():
+    """Every definition's name text id -> its English text (127 of 162 have one)."""
+    out = {}
+    for i in range(162):
+        nid = struct.unpack_from('<I', DUMP, DEFS + i * DEF_SIZE + 0x340)[0]
+        if nid in STRINGS['us']:
+            out[nid] = STRINGS['us'][nid]
+    return out
+
+
+def op_record(op_id, planet, rows, states):
+    rec = bytearray(0x5C)
+    struct.pack_into('<IIIH', rec, 4, op_id, 0, 0xABCDEF01, planet)
+    rec[0x20], rec[0x34] = 7, 1
+    for k, st in enumerate(states):
+        struct.pack_into('<I', rec, 0x48 + 4 * k, st)
+    rec[0x54] = len(states)
+    for k, r in enumerate(rows):
+        rec[0x55 + k] = r
+    rec[0x58] = len(rows)
+    return bytes(rec)
+
+
+def mission_row(op, definition, state, index):
+    row = bytearray(0x4C)
+    struct.pack_into('<IIIII', row, 0x28, op, 0, definition, 0x1234, state)
+    struct.pack_into('<III', row, 0x3C, 100 + index, 9, index)
+    return bytes(row)
+
+
+def board(lua, ops, rows, selected=0xFFFFFFFF, top=15, card=0, depth=2):
+    f = lua.globals().fake
+    f.patch(0x347CEE8, struct.pack('<Q', BOARD))
+    blob = bytearray(0x5C * 110)
+    for i, rec in ops.items():
+        blob[i * 0x5C:(i + 1) * 0x5C] = rec
+    f.heap(BOARD + 0xF7280, bytes(blob))
+    table = bytearray(0x61FC)
+    for r, row in enumerate(rows):
+        table[r * 0x4C:(r + 1) * 0x4C] = row
+    struct.pack_into('<I', table, 0x61F8, len(rows))
+    f.heap(BOARD + 0xF9A10, bytes(table))
+    f.heap(BOARD + 0x17A2A0, struct.pack('<I', selected))
+    desc = bytearray(200)
+    struct.pack_into('<H', desc, 26, card)
+    f.heap(BOARD + 0x4168D0, bytes(desc))
+    f.patch(0x347CE28, struct.pack('<Q', UI))
+    stack = bytearray(0x30)
+    struct.pack_into('<II', stack, 0x14, 1, top)
+    struct.pack_into('<I', stack, 0x28, depth)
+    f.heap(UI + 0x4288, bytes(stack))
+    for k, v in def_names().items():
+        f.names[k] = v
+
+
+# Operation #2: three missions (Launch ICBM open, Retrieve Valuable Data and Search and Destroy hidden), #5: one, #7: a
+# row index outside the table.
+PROBE_OPS = {2: op_record(1002, 77, [0, 1, 2], [1, 0, 0]), 5: op_record(1005, 12, [3], [1]), 7: op_record(1007, 3, [9], [1])}
+PROBE_ROWS = [mission_row(2, 0, 1, 0), mission_row(2, 3, 0, 1), mission_row(2, 12, 0, 2), mission_row(5, 100, 1, 0)]
+
+
+def probe_tests(check):
+    lua, _, _, log, status = started(before=lambda l, a, r: board(l, PROBE_OPS, PROBE_ROWS, selected=2), frames=5)
+    f = lua.globals().fake
+    lg = log()
+    check('Operation probe on: board [0x347CEE8], 110 records of 0x5C at +0xF7280, rows at +0xF9A10 (count +0x61F8, '
+          '0x4C each), definitions 0x3773420 (162 of 0x380)' in lg
+          and 'Mission definitions: 162 (Automatons 58, Illuminate 45, Terminids 59)' in lg,
+          'probe: on, every value from the signatures; 162 definitions by faction')
+    check('Operation op #2 id 1002 planet 77 type 0 difficulty 7 race 0 settings 0 seed abcdef01: 3 missions, record '
+          'states {1 0 0}' in lg
+          and '  mission 1: row 0, def 0 c8859069 Automatons "LAUNCH ICBM", state 1, type 9, index 0, op 2' in lg
+          and '  mission 2: row 1, def 3 19e3e290 Automatons "RETRIEVE VALUABLE DATA", state 0' in lg
+          and '  mission 3: row 2, def 12 a41d64ac Automatons "SEARCH AND DESTROY", state 0' in lg,
+          'probe: an operation\'s three missions, the hidden ones too, named in the game\'s text')
+    check('mission 1: row 9 outside the table (4 rows)' in lg and 'Operation op #5' in lg,
+          'probe: a row outside the table is logged, not read')
+    check('Screen: presenter 15 (galactic map)' in lg
+          and 'Selected operation #2 on screen 15; map descriptor mission type 0 (def 0 c8859069' in lg,
+          'probe: the galactic map and the selected operation with the card\'s descriptor')
+    lua.execute('step(200)')
+    check(log().count('Operation op #2') == 1 and lua.eval('TrueIntel.errors') == 0,
+          'probe: an unchanged operation is logged once')
+    f.poke(BOARD + 0xF9A10 + 0x4C + 0x38, struct.pack('<I', 1))
+    f.poke(BOARD + 0xF7280 + 5 * 0x5C + 0x34, b'\0')
+    lua.execute('step(70)')
+    lg = log()
+    check(lg.count('Changed op #2') == 1 and 'mission 2: row 1, def 3 19e3e290 Automatons "RETRIEVE VALUABLE DATA", '
+          'state 1' in lg.split('Changed op #2', 1)[1] and 'Operation #5 gone' in lg,
+          'probe: a mission row\'s change and an operation gone are logged')
+    f.mark_down = True
+    lua.execute('step(2)')
+    f.mark_down = False
+    lua.execute('step(2)')
+    lg = log()
+    check('MARK 1: screen 15, selected 2, board 0x30000000, 4 mission rows' in lg
+          and '  row 3: def 100 ' in lg and '  map descriptor: mission type 0 | ' in lg and 'MARK 2' not in lg,
+          'probe: Mark (Mod Bindings Menu) logs every operation, every row and the descriptor, once a press')
+    check(f.writes == 12 + len(TIP_COPIES) and 'Operation probe: on: 2 operations watched, 1 marks' in status(),
+          'probe: nothing written by it (the twelve lines\' and the tip lists\' writes only); its state in the status')
+
+    # Mod Bindings Menu refuses the binding (no free action): F6 marks.
+    # An empty presenter stack: no screen, not the map.
+    luab, _, _, logb, _ = started(before=lambda l, a, r: (board(l, PROBE_OPS, PROBE_ROWS, depth=0),
+                                                          l.execute('fake.refuse_binding = true')))
+    luab.execute('fake.f6 = true; step(2); fake.f6 = false; step(2)')
+    check('not registered (no free action); F6 works too' in logb() and 'MARK 1: screen 0' in logb()
+          and 'galactic map' not in logb(), 'probe: the binding refused (the menu answers false), F6 marks; no screen')
+
+    # No board yet (the game starting): waits, no error; the armor lines apply.
+    luac, _, _, logc, _ = started(before=lambda l, a, r: l.globals().fake.patch(0x347CEE8, bytes(8)), frames=40)
+    check('Operation probe: no mission board yet' in logc() and luac.eval('TrueIntel.errors') == 0
+          and luac.eval('TrueIntel._test.lines').state == 'applied', 'probe: no board yet, no error, the lines apply')
+
+    # The probe's code moved (a patched byte): the probe is off, the armor lines apply.
+    luad, _, _, logd, _ = started(before=lambda l, a, r: (board(l, PROBE_OPS, PROBE_ROWS), l.globals().fake.patch(0x12BF9FA, b'\xCC')),
+                                  frames=40)
+    check('Operation probe off: signatures missing: board' in logd() and 'Operation op #' not in logd()
+          and luad.eval('TrueIntel._test.lines').state == 'applied', 'probe: its signature missing, off; the lines apply')
+
+
+# The loading screen tips (2-recon-2): the dump's own lists (research/tips.py), 17 in read-only sections, one writable.
+TIP_IDS = tips_research.tip_ids(DUMP)
+TIP_COPIES = tips_research.copies(DUMP, TIP_IDS)
+OUR_TIP_KEYS = re.findall(r"\{key = '(tip_[a-z0-9_]+)'", SOURCE)  # our tips, in OUR_TIPS' order
+# The operation card: the UI manager global (0x3326E68) -> a manager on the fake heap with two screens {pointer, type}
+# (+0x166C count, +0x1670 rows) and the map's registry (+25224: {1, owner, 226}); the owner holds the card's
+# description label inside the operation frame (owner + 349072), a decoy label before the frame, and a game tip's id.
+UIM, OWNER, LABEL = 0x32000000, 0x33000000, 349072 + 0x40
+TEMPLATE, COUNT_KEY = 0xC67C7FAF, 0xAB2A7B35
+SETTINGS_DESC = struct.unpack_from('<I', DUMP, 0x32FEF10 + 0x2C)[0]  # settings index 0's card description
+
+
+def ui(lua, desc=SETTINGS_DESC):
+    f = lua.globals().fake
+    f.patch(0x3326E68, struct.pack('<Q', UIM))
+    m = bytearray(0x7000)
+    struct.pack_into('<I', m, 0x166C, 2)
+    struct.pack_into('<QIIQII', m, 0x1670, OWNER, 226, 0, 0x36000000, 224, 0)
+    struct.pack_into('<IIQI', m, 25224, 1, 0, OWNER, 226)
+    f.heap(UIM, bytes(m))
+    o = bytearray(0x91000)
+    struct.pack_into('<I', o, LABEL + 0x110, desc)
+    struct.pack_into('<I', o, 0x2000 + 0x110, desc)
+    struct.pack_into('<I', o, 0x5000, TIP_IDS[0])
+    f.heap(OWNER, bytes(o))
+    f.names[desc] = STRINGS['us'][desc]
+    for i in TIP_IDS:
+        f.names[i] = STRINGS['us'][i]
+
+
+def card_row(op, definition, state, index, seed):
+    row = bytearray(mission_row(op, definition, state, index))
+    struct.pack_into('<I', row, 0x34, seed)
+    return bytes(row)
+
+
+def tips_card_tests(check):
+    lua, _, _, log, status = started(frames=60)
+    f = lua.globals().fake
+    tx = texts_by_id(lua)
+    lg = log()
+    check(len(TIP_COPIES) == 18 and 'Tips: 18 copies of the game\'s 82 tips in game.dll: 1 +0x21F0D00 (read-only data'
+          in lg and '18 +0x3317D60 (writable data, protection 4)' in lg
+          and 'Tips (found): 18 lists now ours, 0 already, 0 held by something else, 0 failed' in lg,
+          'tips: the 18 copies found (17 read-only, one writable), every list ours')
+    writable = BASE + 0x3317D60
+    check(u32_at(lua, writable) == tx[OUR_TIP_KEYS[0]]['loc'] and u32_at(lua, writable + 4) == tx[OUR_TIP_KEYS[1]]['loc']
+          and u32_at(lua, writable + 4 * len(OUR_TIP_KEYS)) == tx[OUR_TIP_KEYS[0]]['loc']
+          and all(u32_at(lua, BASE + TIP_COPIES[0] + 4 * i) == tx['tip_test_copy_1']['loc'] for i in range(82))
+          and all(u32_at(lua, BASE + TIP_COPIES[16] + 4 * i) == tx['tip_test_copy_17']['loc'] for i in range(82)),
+          'tips: the writable list holds our tips in turn, read-only list k its test text in every slot')
+    check(f.protects >= 34 and len(list(f.unlocked.keys())) == 0 and 'Tips: 18 copies, ours' in status(),
+          'tips: read-only pages unlocked for the write and locked again; the status')
+    check(all(t['values'] == {'default': t['values']['default']} for k, t in tx.items() if k.startswith('tip_'))
+          and all(len(re.sub(r'</?c[^>]*>', '', t['values']['default'])) <= 191 for k, t in tx.items() if k.startswith('tip_')),
+          'tips: English only, none longer than the game\'s longest English tip (191)')
+    # A release's policy: only the jokes' slots (32), the game's real advice stays.
+    jokes = [i for i, t in enumerate(TIP_IDS) if '-- joke: ' in SOURCE.split('0x%08X,  ' % t, 1)[1].split('\n', 1)[0]]
+    luaj, _, _, _, _ = started(frames=1)
+    luaj.execute('TrueIntel._test.tips.every_slot = false; step(60)')
+    first, second = tx[OUR_TIP_KEYS[0]]['loc'], tx[OUR_TIP_KEYS[1]]['loc']
+    check(len(jokes) == 32 and jokes[:2] == [0, 1] and TIP_IDS[2] not in jokes
+          and u32_at(luaj, writable) == first and u32_at(luaj, writable + 4) == second
+          and u32_at(luaj, writable + 8) == TIP_IDS[2]
+          and u32_at(luaj, BASE + TIP_COPIES[0]) == tx['tip_test_copy_1']['loc']
+          and u32_at(luaj, BASE + TIP_COPIES[0] + 8) == TIP_IDS[2]
+          and sum(u32_at(luaj, writable + 4 * i) != TIP_IDS[i] for i in range(82)) == 32,
+          'tips: a release replaces the 32 jokes only, the game\'s real advice stays')
+    lua.execute("fake.texts.registered = false; fake.texts.refuse = {'UNAVAILABLE', 'test'}; step(40)")
+    check(all(u32_at(lua, BASE + c) == TIP_IDS[0] and u32_at(lua, BASE + c + 4 * 81) == TIP_IDS[81] for c in TIP_COPIES)
+          and 'lists now the game\'s' in log(), 'tips: our texts lost, every list the game\'s again')
+
+    # The card: operation #2 (settings 0) hovered on the map: mission 1 done, mission 2 the card's current one.
+    rows = [card_row(2, 0, 3, 0, 0x1111), card_row(2, 3, 1, 1, 0x2222), card_row(2, 12, 1, 2, 0x3333)]
+    ops = {2: op_record(1002, 77, [0, 1, 2], [3, 1, 1])}
+
+    def setup(lua_, at_, recs_, top=15):
+        board(lua_, ops, rows, selected=2, top=top)
+        lua_.globals().fake.poke(BOARD + 0x4168D0, struct.pack('<I', 0x2222))
+        ui(lua_)
+
+    luac, _, _, logc, statusc = started(before=setup, frames=30)
+    fc = luac.globals().fake
+    desc = STRINGS['us'][SETTINGS_DESC]
+    want = ('%s\n• <c=ff8c8c8c>LAUNCH ICBM</c>\n• <c=ffffe900>RETRIEVE VALUABLE DATA</c>\n'
+            '• SEARCH AND DESTROY' % desc)
+    calls = list(fc.calls.values())
+    check(fc.card_text == want and calls == ['set_label %X %08X' % (OWNER + LABEL, TEMPLATE),
+                                             'set_string_arg %X %08X' % (OWNER + LABEL, COUNT_KEY)],
+          'card: the description label gets the description and every mission (done grey, current yellow), once')
+    check('in the map screen at +0x2000 (0 arguments), +0x%X (0 arguments); the label used: +0x%X' % (LABEL, LABEL)
+          in logc() and 'Card: op #2' in logc() and 'shown 1 times' in statusc(),
+          'card: the label inside the operation frame chosen, the decoy before it logged only')
+    fc.poke(OWNER + LABEL + 0x110, struct.pack('<I', SETTINGS_DESC))  # the game sets the card again
+    fc.poke(BOARD + 0xF9A10 + 0x4C + 0x38, struct.pack('<I', 3))      # mission 2 done
+    fc.poke(BOARD + 0x4168D0, struct.pack('<I', 0x3333))              # mission 3 current
+    luac.execute('step(10)')
+    check(len(fc.calls) == 4 and fc.card_text.endswith('<c=ff8c8c8c>RETRIEVE VALUABLE DATA</c>\n'
+                                                       '• <c=ffffe900>SEARCH AND DESTROY</c>'),
+          'card: set again by the game, the label gets the missions anew')
+    fc.mark_down = True
+    luac.execute('step(2)')
+    fc.mark_down = False
+    luac.execute('step(20)')
+    lg = logc()
+    check('Tip scan 1 (Mark, presenter 15): 2 screens' in lg
+          and 'Tip scan 1: screen type 226 +0x5000 holds the game\'s tip 573CB314 "Did you know tips' in lg
+          and 'Tip scan 1: done, 1 hits' in lg and luac.eval('TrueIntel.errors') == 0,
+          'screens: Mark searches the UI screens for every tip id')
+
+    # Not on the map (the briefing): nothing called.
+    lud, _, _, _, _ = started(before=lambda l, a, r: setup(l, a, r, top=14), frames=30)
+    check(len(lud.globals().fake.calls) == 0, 'card: not on the galactic map, the card is left alone')
+
+
 def run():
     ok = []
 
@@ -315,9 +645,11 @@ def run():
                            'zh-Hans', 'zh-Hant'}
           and all(set(LOCALES[t]) == set(LOCALES['en']) for t in LOCALES if t not in ('en', 'en-GB')),
           'locales: every text in 13 languages, British English for "armour"')
-    for name in ('ModOptionsMenu', 'ModBindingsMenu', 'register_option', 'register_binding', 'Keyboard', 'listed_numbers',
-                 'not {listed}'):
-        check(name not in SOURCE.split('-- END SIGNATURE ENGINE', 1)[1], 'the release has no ' + name)
+    absent = ('ModOptionsMenu', 'register_option', 'listed_numbers', 'not {listed}')
+    if not RECON:
+        absent += ('ModBindingsMenu', 'register_binding', 'Keyboard', 'Operation probe')
+    for name in absent:
+        check(name not in SOURCE.split('-- END SIGNATURE ENGINE', 1)[1], 'the build has no ' + name)
 
     # Without HD2Runtime: not available, nothing written.
     lua0, logdir0 = new_run()
@@ -339,8 +671,12 @@ def run():
     check(lines.state == 'applied' and len(lines.list) == 12, 'twelve lines applied (%s, %d)' % (lines.state,
                                                                                                len(lines.list)))
     tx = texts_by_id(lua)
-    check(len(tx) == 12 and f.texts.ensures == 1 and 'p18_b4f88129_60' in tx,
-          'twelve texts in one registration (%d, %d ensures)' % (len(tx), f.texts.ensures))
+    tip_texts = {k: v for k, v in tx.items() if k.startswith('tip_')}
+    tx = {k: v for k, v in tx.items() if not k.startswith('tip_')}
+    check(len(tx) == 12 and f.texts.ensures == 1 and 'p18_b4f88129_60' in tx
+          and len(tip_texts) == len(OUR_TIP_KEYS) + 24,
+          'twelve line texts and every tip text in one registration (%d, %d tips, %d ensures)'
+          % (len(tx), len(tip_texts), f.texts.ensures))
     check(all(set(t['values']) == set(CODES) | {'default'} and t['values']['default'] == t['values']['us']
               for t in tx.values()), 'every text in all 15 game languages, English the default')
     gun = tx['p18_b4f88129_60']['values']
@@ -375,8 +711,8 @@ def run():
     clean_lua, clean_at, _, _, _ = started(frames=0)
     check(rows_snapshot(clean_lua, clean_at, recs) == base_snapshot,
           'no gameplay change: every key, type, value and stat row is the game\'s')
-    check(len(list(f.specs.values())) == 0 and len(list(f.bound.values())) == 0,
-          'nothing registered with Mod Options Menu or Mod Bindings Menu')
+    check(len(list(f.specs.values())) == 0 and list(f.bound.values()) == ([MARK_ID] if RECON else []),
+          'nothing registered with Mod Options Menu; Mod Bindings Menu: %s' % ('Mark only' if RECON else 'nothing'))
     check(all(f.declared['ti_' + n].symbol == n for n in ('GetCurrentProcess', 'GetModuleHandleA', 'ReadProcessMemory',
                                                          'WriteProcessMemory'))
           and f.declared.ReadProcessMemory.type.startswith('int(*)(uintptr_t'),
@@ -387,7 +723,7 @@ def run():
           'log: 12 made, the 7 matching copies exact, the armor scale')
     check('Text: language de: 11 of 11 texts translated' in lg and 'Text: language en-GB: 1 of 11' in lg,
           'log: every language\'s translation count')
-    check(status().startswith('WORKING\nTrue Intel V1'), 'status: WORKING, V1')
+    check(status().startswith('WORKING\nTrue Intel V' + VERSION), 'status: WORKING, V' + VERSION)
 
     # A language change: the game drops our table; two misses, registered again; the rows stay ours.
     f.texts.registered = False
@@ -507,6 +843,9 @@ def run():
     check(status9().startswith('NOT AVAILABLE - signatures missing: customization')
           and lua9.globals().fake.writes == 0, 'passive_value missing: refused, nothing written')
 
+    if RECON:
+        probe_tests(check)
+    tips_card_tests(check)
     print('%d/%d' % (sum(ok), len(ok)))
     return all(ok)
 

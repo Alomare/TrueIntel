@@ -46,7 +46,7 @@ The Armory's panel builds its text when the item you look at changes. The verdic
 - **Memory access.** Reads and writes go through `ReadProcessMemory` / `WriteProcessMemory` on the game's own process, declared under the mod's own FFI names (`ti_ReadProcessMemory`, bound to the export) so another mod's declarations of those functions can't change how they are called: the lines are made once, the rows are checked every 10 seconds and the texts every quarter second (a language change drops them; they are registered again).
 - **Tests.** `tests/test_release.py` runs the built entry under LuaJIT against a game.dll dump (not included), with the game's real passive records and HD2Runtime's text table simulated.
 
-Research notes: [NOTES.md](NOTES.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
+How it works in the game's code: [RESEARCH.md](RESEARCH.md). Contributing: [CONTRIBUTING.md](CONTRIBUTING.md). Release notes: [CHANGELOG.md](CHANGELOG.md).
 
 ## Credits
 

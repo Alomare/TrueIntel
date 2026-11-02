@@ -14,12 +14,19 @@
 -- The numbers are read from the game's records when the lines are made (the game's own #BONUS where it can show them).
 -- Every line is registered in the game's 15 text languages (locales/, through CowboyBingus' bingus_text.lua), so the
 -- game shows its own language's. The Armory panel builds its text when the item shown changes.
+-- 2-recon-1 added a read-only probe for the next feature (every mission of an operation, RESEARCH.md "Operations and
+-- missions"): it logs the operations' records and mission rows, with a test key (Mark: Mod Bindings Menu, else F6).
+-- 2-recon-2 tries both next features live:
+-- - the operation card on the galactic map lists every mission of the hovered operation under its description, in
+--   the card's own text widget (the game's #COUNT template with a string argument, Mod Options Menu's technique);
+-- - loading screen tips: the game's tip list (82 text ids in game.dll's read-only data) points at our tips instead;
+-- and logs the UI screens, frame gaps and where a shown tip lives, in case the game copies its list at start-up.
 -- Logs (Bingus log folder): TrueIntel.log, TrueIntel_STATUS.log. Needs HD2Runtime (its text table).
 if rawget(_G, 'TrueIntel') then return end
 
 local ffi = require('ffi')
 
-local M = {version = '1', frames = 0, time = 0, errors = 0}
+local M = {version = '2-recon-4', frames = 0, time = 0, errors = 0}
 rawset(_G, 'TrueIntel', M)
 
 local loader = rawget(_G, 'CowboyBingusModLoader')
@@ -35,6 +42,20 @@ local SIGS = {
      fields = {stat_rows = {'u8', {28, 62}}, stat_row_count = {'u8', {45}}}},
     {name = 'armor_scale', rva = 0x19161d0, optional = true, text = 'F3 0F 10 3D ?? ?? ?? ?? 4C 8D 75 F0 F3 0F 10 35 ?? ?? ?? ?? 41 8B F4 66 0F 1F 84 00 00 00 00 00 33 C9 44 8B CE 45 8B C7 8B D3 E8 ?? ?? ?? ?? F3 41 0F 10 2E 0F 28 E0 85 F6 75 ?? 48 8B 44 24 28 41 B8 47 3B AE AF 0F 28 C8 8B 48 1C E8 ?? ?? ?? ?? 0F 28 E0 F3 41 0F 5C E0 F3 0F 59 E7 F3 0F 58 E5',
      fields = {armor_scale = {'rip', {4}, {8}}, call_passive_value = {'call', {77}, {81}}}},
+    {name = 'operation_missions', rva = 0x12bf9fa, optional = true, text = '0F B6 4E ?? 33 DB 4C 8B F8 84 C9 0F 84 ?? ?? ?? ?? 48 89 AC 24 E0 0C 00 00 4C 89 B4 24 A8 0C 00 00 0F 1F 44 00 00 0F B6 C9 3B D9 0F 83 ?? ?? ?? ?? 48 8B 15 ?? ?? ?? ?? 0F B6 4C 33 ?? 48 81 C2 ?? ?? ?? ?? 3B 8A ?? ?? ?? ?? 0F 83 ?? ?? ?? ?? 48 6B E9 ?? 48 03 EA 0F 84 ?? ?? ?? ?? 48 8B 05 ?? ?? ?? ?? 8B D3 48 8B 88 28 01 00 00 48 8B 81 58 01 00 00 49 8B CF FF D0 48 8B 0D ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 44 8B C3 48 8B F8 4C 8B 89 28 01 00 00 48 8B C8 41 FF 91 F0 00 00 00 48 8B 0D ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 44 8B 45 ?? 4C 8B 89 28 01 00 00 48 8B CF 41 FF 91 F0 00 00 00 48 8B 0D ?? ?? ?? ?? 48 8D 15 ?? ?? ?? ?? 44 8B 44 9E ?? 4C 8B 89 28 01 00 00 48 8B CF 41 FF 91 F0 00 00 00',
+     fields = {board = {'rip', {52}, {56}}, op_mission_count = {'u8', {3}}, op_mission_rows = {'u8', {60}}, mission_rows = {'u32', {64}}, mission_row_count = {'u32', {70}}, mission_row = {'u8', {83}}, mission_type = {'u8', {175}}, op_mission_states = {'u8', {211}}}},
+    {name = 'selected_operation', rva = 0x6fde4a, optional = true, text = '8B 82 ?? ?? ?? ?? F3 0F 58 F8 0F 28 F7 83 F8 ?? 73 ?? 48 6B C8 ?? 48 81 C2 ?? ?? ?? ?? 48 03 D1 80 7A ?? 00',
+     fields = {op_selected = {'u32', {2}}, op_max = {'u8', {15}}, op_record = {'u8', {21}}, operations = {'u32', {25}}, op_active = {'u8', {34}}}},
+    {name = 'mission_definitions', rva = 0xfd2a24, optional = true, text = '8B C7 8B CB 48 69 D0 ?? ?? ?? ?? 48 8D 05 ?? ?? ?? ?? 48 03 D0 E8 ?? ?? ?? ?? FF C7 81 FF ?? ?? ?? ??',
+     fields = {definitions = {'rip', {14}, {18}}, definition_size = {'u32', {7}}, definition_count = {'u32', {30}}}},
+    {name = 'presenters', rva = 0x662520, optional = true, text = '48 8B 0D ?? ?? ?? ?? 48 81 C1 ?? ?? ?? ?? 8B 41 ?? 83 E8 01 48 98 78 ?? 48 8D 0C 81 48 83 C1 ?? 83 39 0E 74 ?? 48 83 E9 04 48 83 E8 01 79 ?? C3 48 8B 0D ?? ?? ?? ??',
+     fields = {ui = {'rip', {3}, {7}}, presenters = {'u32', {10}}, depth = {'u8', {16}}, stack = {'u8', {31}}}},
+    {name = 'ui_manager', rva = 0xb938d4, optional = true, text = '48 8B 35 ?? ?? ?? ?? 33 FF 0F B6 EA',
+     fields = {ui_manager = {'rip', {3}, {7}}}},
+    {name = 'label_init', rva = 0x143afa0, optional = true, text = '40 53 48 83 EC 20 BA ?? ?? ?? ?? 48 8B D9 E8 ?? ?? ?? ?? C6 83 ?? ?? ?? ?? 00 33 C0 89 83 ?? ?? ?? ?? C7 83 ?? ?? ?? ?? FF FF FF FF 48 89 83 ?? ?? ?? ?? 48 89 83 84 02 00 00 66 89 83 90 02 00 00 88 83 A0 02 00 00 48 89 83 ?? ?? ?? ?? C7 83 8C 02 00 00 00 00 80 BF 48 89 83 ?? ?? ?? ?? 89 83 B0 02 00 00 88 83 ?? ?? ?? ?? 48 C7 83 94 02 00 00 FF FF FF FF C7 83 9C 02 00 00 FF FF FF FF 48 83 C4 20 5B',
+     fields = {label_type = {'u32', {7}}, label_text_id = {'u32', {30}}, label_arg_count = {'u32', {21}}, label_cache = {'u32', {74}}, label_handle = {'u32', {36}}, label_font_size = {'u32', {47}}, label_font_material = {'u32', {91}}, label_last = {'u32', {103}}}},
+    {name = 'label_text_call', rva = 0x190a7a2, optional = true, text = 'BA 46 CF 68 8E 48 8B CF E8 ?? ?? ?? ?? 4C 8D 86 D0 02 00 00 BA ?? ?? ?? ?? 48 8B CF E8 ?? ?? ?? ??',
+     fields = {text_set_label = {'call', {9}, {13}}, text_count_key = {'u32', {21}}, call_set_string_arg = {'call', {29}, {33}}}},
 }
 -- END SIGNATURES
 
@@ -337,6 +358,173 @@ local LINES = {
 -- END LINES
 
 ---------------------------------------------------------------------------------------
+-- Loading screen tips
+
+-- BEGIN TIPS (generated by research/tips.py from the game data; do not edit)
+-- The game's 82 loading screen tips (text ids, in the array's order), with their English text;
+-- TIP_JOKES: the 32 jokes and lore among them (the slots our tips take).
+local VANILLA_TIPS = {
+    0x573CB314,  -- joke: Did you know tips are shown during these transition sequences?
+    0xE12238EC,  -- joke: Don't drink and drive.
+    0x14C09C44,  -- Most weapons have different fire modes or functions—hold Reload to access them.
+    0x7F49E207,  -- Tired of missing your target? Use First Person View (FPV) to make long-distance shots.
+    0xFCB5FA40,  -- Check your Ammo by holding the Reload button.
+    0x15A48671,  -- joke: Super Earth has many holidays, but the most important is October 26th—Liberty Day!
+    0x6B9F692F,  -- Each faction presents unique challenges. Mix up your gear and try new tactics!
+    0x873FBCD5,  -- Diving to the ground can be a life-saver, but it also makes you an easy target for melee units.
+    0xCDAFC73B,  -- Most enemies have both weak spots and armored spots. The SEAF training manual recommends aiming for ...
+    0x5B73FD18,  -- joke: Friendly Fire isn't.
+    0x9F109A62,  -- More challenging missions yield greater rewards.
+    0xCAFFC293,  -- Use Stims to heal your injuries and replenish your stamina—or that of your fellow Helldivers, in a p...
+    0xC1FA9CF4,  -- Nine out of ten doctors agree that a wound to the chest will make you bleed out if unattended.
+    0x95BA2596,  -- Arm injuries reduce your ability to handle recoil and will cause your aim to sway more.
+    0x03E05312,  -- Rare Samples are only available on more challenging missions.
+    0x61A943C0,  -- It pays to be a straight shooter—angled fire might glance off your target or even ricochet into your...
+    0xAA85C78B,  -- Reloading discards the remaining rounds in your magazine.
+    0x6D88BE14,  -- The Super Destroyer can only stay in low orbit for a limited time—watch that mission clock!
+    0xEDC42010,  -- When the mission timer runs out, the Super Destroyer will leave low orbit and you'll lose access to ...
+    0x9C270194,  -- You have a limited amount of reinforcements available in a mission. If you run out they will be repl...
+    0xFC9B90CA,  -- The closer you are to the edge of the map, the steeper the angle of incoming orbital bombardments. P...
+    0xA38FBFD3,  -- Hellpods have basic steering capabilities. Try to drop in on your enemies!
+    0x8A343D22,  -- Place markers on the map to help your squad navigate.
+    0xC60C070F,  -- As a last resort, you can use melee attacks to fend off enemies. Remember: death is better than cowa...
+    0xE0A80DED,  -- Use the Eagle Rearm stratagem during calmer periods to ensure you have those Eagle Strikes available...
+    0x99613634,  -- Eagles are fast-response strike craft, with much shorter call-in times than Orbital fire support.
+    0x82184D9E,  -- Make sure to pick up your fallen squadmates' sample containers. They're critical for our collective ...
+    0xF9186E13,  -- Weapons like pistols and submachine guns can be used with one hand—perfect for when you need to carr...
+    0x7BB90828,  -- Difficult terrain inhibits your movement. Best practices recommend avoiding Snow, Mud, Water, Shrubb...
+    0x8A810998,  -- When your stamina is depleted, your sprint speed is slower and your accuracy is worse.
+    0x619F137F,  -- You can pick up active grenades and toss them away before they explode. Give it a try, it's fun!
+    0xFE389F38,  -- Being prone makes you less susceptible to explosions. When in imminent danger, dive!
+    0xA2CC7A67,  -- Your stance has a significant impact on accuracy. The SEAF manual lists the following stances in ord...
+    0x8A90028C,  -- The Automatons are equipped with hyper reactive protocols, making them susceptible to suppressive fi...
+    0xBDD98657,  -- All Stratagems have their strengths and weaknesses. Choose your Stratagem loadout to best fit the mi...
+    0x41B6FF91,  -- Armor isn't just for looks—heavier armor makes you more resilient to attacks but slows you down and ...
+    0x6CDD9E43,  -- Hold a grenade before throwing to "cook" it. Time your throw for an air-burst detonation! (Note: wai...
+    0x3731903A,  -- joke: Helldivers traveling the galaxy might come across ancient ruins and other curiosities. Just remember...
+    0xC449458F,  -- joke: When you're up against the bots, remember the 3 Cs: / Cover, Courage, and more Cover.
+    0x251EA37D,  -- Kill bugs before they get close. Remember, nothing protects your personal space better than bullets.
+    0xB54CB14B,  -- joke: Don't die!
+    0x2AC923F4,  -- Choose your loadout carefully to ensure your squad has all the resources it needs. Democracy depends...
+    0x47CF89DF,  -- joke: Don't worry—stims have zero addictive properties!* / *Study paid for by Permacura. Permacura: put yo...
+    0x08777499,  -- There's no one right way to skin a bug. Experiment with different tactics and see what works!
+    0x22724034,  -- joke: Managed Democracy is a cornerstone of advanced civilization.
+    0x900B4EE7,  -- joke: Want to show off how firmly you support capitalism? Spend medals on a Warbond!
+    0xB6B044E9,  -- joke: If at first you don't succeed, dive, dive again. And again. And again. And again. And again. And aga...
+    0xC5047E23,  -- joke: Pay attention to these tips. They've been carefully calibrated to ensure your success.
+    0x610E07F3,  -- joke: Don't worry, if you fail an objective, you will NOT be sent to a freedom camp. This is merely a diss...
+    0x360DD684,  -- joke: Don't forget to take breaks! / … / That is, if you want to be remembered as a coward.
+    0x3DAA024B,  -- joke: Practice your daily desensitization exercises to ensure you remain unfazed by enemy atrocities.
+    0xED12B266,  -- joke: Remember to fill in your C-01 permit before any act that could result in a child.
+    0x3D1963E8,  -- Don't go it alone—join a squad in order to unleash maximum liberation!
+    0x19A91B5E,  -- Collect medals to progress your Warbond. No rush though—Warbonds can be completed at any time.
+    0x02C627E7,  -- While the Helldiver training program is undeniably infallible, you can always repeat your training f...
+    0xC7777C38,  -- joke: The Galactic War is a united effort. Only by working together can we ensure planets don't fall to th...
+    0x936CC34F,  -- See a planet that's on the brink of falling under enemy control? Rally your fellow Helldivers and mo...
+    0x5E5E7E85,  -- On a mission alone and dying to have someone liberating by your side? Use an SOS beacon to call in a...
+    0xB25CEDC7,  -- Missions are filled with unexplored points of interest. Check them out—you never know what you might...
+    0xC3BAD11C,  -- joke: You are Super Earth's elite. Never forget that.
+    0xB5B837CB,  -- joke: Remember: Freedom!
+    0x034A86EC,  -- joke: When in doubt, don't think—simply shout "For Democracy!" and charge head-first into your problems.
+    0xDCC846BE,  -- Unhappy with who you are? Change your appearance and voice in the customization chamber. It's that e...
+    0x15CE1CFC,  -- joke: Super Earth recommends spending at least 2.4 seconds per mission enjoying the scenery. A happy Helld...
+    0xA54F3081,  -- joke: If you notice a squadmate sympathizing with an enemy, report them to your Democracy Officer. Thought...
+    0x0638BCF1,  -- If the enemies just keep coming, find out where they're coming from and unleash hell. Bug hive? Dest...
+    0x4B391232,  -- For budgetary reasons, Hellbombs require manual arming. But don't stick around unless you're looking...
+    0x86996DA7,  -- Mission difficulty is determined in part by the types of enemy units in the area. Make sure you brin...
+    0x7DF9C252,  -- If a squadmate dies during a mission, make sure you pick up their dropped samples. There will be tim...
+    0x6C1B6AA2,  -- Watch out for alien storms. Super Earth scientists have officially classified many of them as danger...
+    0xDC7E0399,  -- Day and night sides of a planet are visible during mission selection, allowing you to choose the mis...
+    0x50CD1D81,  -- joke: Every citizen is equally important to the war effort, but Helldivers are the most important.
+    0x2ECCCB74,  -- Remember that armored enemies require heavy weapons. Bring the appropriate equipment for your select...
+    0x38157F13,  -- joke: Don't panic.
+    0x9965FF39,  -- joke: If an enemy ever attempts to engage in diplomacy, SHOOT THEM. We musn't believe their lies.
+    0xD083386D,  -- joke: The Ministry of Science is responsible for continuous scientific progress, augmenting our moral supe...
+    0x8150D193,  -- joke: The Ministry of Defense is responsible for the defense of Liberty against all enemies, human and non...
+    0x3CF3C012,  -- joke: The Ministry of Expansion tirelessly works to expand the reach of Freedom and secures vital resource...
+    0xEFBEF5ED,  -- joke: The Ministry of Prosperity manages Super Earth's economy and ensures a steady flow of resources to t...
+    0x53582F79,  -- joke: The Ministry of Truth is responsible for keeping all citizens well-informed and mentally equipped to...
+    0x8E38BB6F,  -- joke: The Ministry of Humanity maintains healthy, productive voters by managing education, healthcare, soc...
+    0x45B6CAC3,  -- joke: The Ministry of Unity ensures that all of mankind is united as one by protecting us from internal th...
+}
+local TIP_JOKES = {[0x573CB314] = true, [0xE12238EC] = true, [0x15A48671] = true, [0x5B73FD18] = true, [0x3731903A] = true, [0xC449458F] = true, [0xB54CB14B] = true, [0x47CF89DF] = true, [0x22724034] = true, [0x900B4EE7] = true, [0xB6B044E9] = true, [0xC5047E23] = true, [0x610E07F3] = true, [0x360DD684] = true, [0x3DAA024B] = true, [0xED12B266] = true, [0xC7777C38] = true, [0xC3BAD11C] = true, [0xB5B837CB] = true, [0x034A86EC] = true, [0x15CE1CFC] = true, [0xA54F3081] = true, [0x50CD1D81] = true, [0x38157F13] = true, [0x9965FF39] = true, [0xD083386D] = true, [0x8150D193] = true, [0x3CF3C012] = true, [0xEFBEF5ED] = true, [0x53582F79] = true, [0x8E38BB6F] = true, [0x45B6CAC3] = true}
+-- END TIPS
+
+-- Our tips (English drafts for the author; translations come once the set is settled): what the game never
+-- explains, nothing the Armory, ship or HUD already say. The author asked for "useful information that's not
+-- exposed anywhere", then for a blend: practical advice and unexplained mechanics first, then the best hidden
+-- numbers (2026-10-16). Sources: HD2Runtime 0.40.0's docs, catalogues and wiki imports (build F5FEE03DCFDB),
+-- this mod's operation logs and the author; one per tip below. Status durations are the stored ones: enemies
+-- resist, so they say "up to". At most 32: a release puts them in the jokes' slots (TIP_JOKES); a recon in
+-- every slot.
+local OUR_TIPS = {
+    -- the author (2026-10-16); the game says so only for samples
+    {key = 'tip_currency', text = 'Medals, Requisition and Super Credits picked up on a mission are <c=ffffe900>shared</c>: everyone in the squad gets them, not only whoever grabbed them.'},
+    -- classes bug_fog_generator / bug_spawner_shrieker 2500, armor 2, durable 1.0; ExplosionCatalogue ac8 function_impact 190/190 AP3, shrapnel 30 (wiki AC-8_P2 35 durable each); APHET 260 + 150, no shrapnel
+    {key = 'tip_flak_structures', text = 'Spore Spewers and Shrieker Nests fall faster to the Autocannon\'s <c=ffffe900>flak</c> than to its armor-piercing shells: every flak burst also throws <c=ffffe900>30</c> fragments into them.'},
+    -- projectile-shots.md standard x (1-D) + durable x D; MG-43 90/23; soldier head durable 0, fog generator 1.0
+    {key = 'tip_durable', text = 'Weapons have a hidden second damage value for big targets and structures. An MG-43 round does <c=ffffe900>90</c> to a Devastator\'s head but only <c=ffffe900>23</c> to a Spore Spewer.'},
+    -- SupportWeaponAuthoring EAT-17 projectile 2000 vs explosion 150 (Medium: none through armor 4)
+    {key = 'tip_at_direct', text = 'Anti-tank rockets put nearly everything into the direct hit: an EAT does <c=ffffe900>2000</c> on impact and only <c=ffffe900>150</c> in its blast. A near miss barely scratches a Charger.'},
+    -- status-effects.md: every status is applied only by a penetrating hit
+    {key = 'tip_status_pen', text = 'Fire, gas and stun only take hold on a hit that <c=ffffe900>penetrates</c> the armor where it lands. Aim status weapons at an armored enemy\'s weak spots.'},
+    -- demolition templates SmallArms 10, FragGrenade 20, Autocannon 30; Epoch 10 (30 full charge), GL-52 0 (wiki)
+    {key = 'tip_demolition', text = 'Bug Holes and Fabricator vents close to <c=ffffe900>demolition force</c>, not damage: grenades and Autocannon shells do it, a part-charged Epoch or a De-Escalator never will.'},
+    -- stratagem-authoring.md SensorProximity 125 m with no line-of-sight check; hard-coded minimum distances (code-read)
+    {key = 'tip_mortars', text = 'Mortar Sentries sense every enemy within <c=ffffe900>125 m</c>, even out of sight, but never fire at one closer than <c=ffffe900>25 m</c> (EMS and Gas: <c=ffffe900>14 m</c>). Set them up behind the fight.'},
+    -- classes Crusher Helmet 300, armor 4, x0; Head 300, armor 1, fatal
+    {key = 'tip_crusher', text = 'Shots to a Crusher\'s helmet never reach its <c=ffffe900>6000</c> health. Break the helmet with Heavy penetration; the armor-<c=ffffe900>1</c> head beneath falls to about <c=ffffe900>4</c> rifle rounds.'},
+    -- classes Gazer (turret_01) Eye 700, armor 1, fatal; other zones armor 5
+    {key = 'tip_gazer', text = 'A Gazer is armor <c=ffffe900>5</c> everywhere but its eye, which is armor <c=ffffe900>1</c> with <c=ffffe900>700</c> health and fatal. Any rifle can bring it down through the eye.'},
+    -- classes warrior_plus Head armor 3, main armor 2, Rear Legs armor 1
+    {key = 'tip_hive_guard', text = 'Light-penetration guns can\'t hurt a Hive Guard\'s armor-<c=ffffe900>3</c> head. Shoot its body or its armor-<c=ffffe900>1</c> rear legs instead.'},
+    -- classes berserker head 110 armor 1 fatal; chest 425 armor 2 durable 0.4
+    {key = 'tip_berserker', text = 'A Berserker\'s head is armor <c=ffffe900>1</c> with only <c=ffffe900>110</c> health: two Liberator rounds. Its armored chest soaks about <c=ffffe900>11</c>.'},
+    -- stratagem-authoring.md search_radius 30, one search, retarget 0 (code-read)
+    {key = 'tip_railcannon', text = 'The Orbital Railcannon picks its one target as it starts, among enemies within <c=ffffe900>30 m</c> of the beacon, and never switches. Throw it right beside the big one.'},
+    -- StratagemAuthoring eagle.target_radius 20 / 60; bomb Eagles don't search
+    {key = 'tip_rocket_pods', text = 'Eagle 110mm Rocket Pods look for targets only within <c=ffffe900>20 m</c> of the beacon (Strafing Run: <c=ffffe900>60 m</c>). Land the beacon right beside what you want hit.'},
+    -- EnemyControl tripod shield 1500, delay 12/12, 2000/s (tripod = Harvester: the only Illuminate tripod)
+    {key = 'tip_harvester', text = 'A Harvester\'s shield takes <c=ffffe900>1500</c> damage, then refills almost at once <c=ffffe900>12 s</c> after the last hit. Keep firing, or break it and strike before those 12 s pass.'},
+    -- backpack-authoring.md SH-51 1000 / 3 / 6 / 300
+    {key = 'tip_directional_shield', text = 'The Directional Shield absorbs <c=ffffe900>1000</c> damage and refills at <c=ffffe900>300</c> a second only <c=ffffe900>3 s</c> after the last hit (<c=ffffe900>6 s</c> once broken). Step back briefly and it is full.'},
+    -- backpack-authoring.md heat 33 %, cooldown 6 %/s, limb injuries, chest Fire
+    {key = 'tip_warp_pack', text = 'Each Warp Pack jump adds <c=ffffe900>33%</c> heat, which cools at <c=ffffe900>6%</c> a second. Warping while hot injures a limb, or sets you on fire.'},
+    -- EnemyDirector hive.patrol_clock_rate_players_1..4 on every mode
+    {key = 'tip_patrols', text = 'Patrols come faster with more Helldivers, but not by much: the patrol clock runs <c=ffffe900>1.25x</c> with two, <c=ffffe900>1.45x</c> with three and <c=ffffe900>1.6x</c> with four.'},
+    -- vehicle-authoring.md rotation.turn_speed
+    {key = 'tip_exosuit_turn', text = 'An Exosuit turns at only <c=ffffe900>65</c> degrees a second, a third of a Helldiver\'s <c=ffffe900>200</c>. Face the threat before it arrives; you can\'t spin round to meet a flank.'},
+    -- missions.md: the timer pause these missions spawn with (code-read)
+    {key = 'tip_hva', text = 'On Evacuate High-Value Assets the mission timer <c=ffffe900>stands still</c> until the evacuation starts. Set up your defenses first.'},
+    -- classes lieutenant_base main 1800, head 250 armor 4 durable 0.25 fatal; Railgun 600/225 AT I
+    {key = 'tip_hulk', text = 'A Hulk has <c=ffffe900>1800</c> health but its head only <c=ffffe900>250</c>, and destroying it kills the Hulk. A Railgun needs no overcharge: one Safe-mode shot there does about <c=ffffe900>500</c>.'},
+    -- booster-authoring.md 0.9, 0.35, 0.7
+    {key = 'tip_boosters', text = 'Vitality Enhancement cuts every hit to <c=ffffe900>90%</c>. Muscle Enhancement removes <c=ffffe900>65%</c> of terrain slowdown. Expert Extraction Pilot lands the shuttle <c=ffffe900>30%</c> sooner.'},
+    -- StatusEffectCatalog stun_small/medium/large durations and users; "up to": enemies resist (status-effects.md)
+    {key = 'tip_stun_strengths', text = 'Stuns come in three strengths: light (Arc Thrower, Blitzer) up to <c=ffffe900>1.5 s</c>, medium (Pacifier, Pummeler, EMS) up to <c=ffffe900>3 s</c>, heavy (Stun Lance, Stun Baton, Halt, stun grenade) up to <c=ffffe900>5 s</c>.'},
+    -- StatusEffectCatalog gas_confusion 5, gas_confusion_2 9, fire 3
+    {key = 'tip_gas_fire', text = 'Gas confuses enemies for up to <c=ffffe900>5 s</c>, the Sterilizer\'s for up to <c=ffffe900>9 s</c>. Fire keeps burning for up to <c=ffffe900>3 s</c> after the last hit.'},
+    -- armor-stats.md damage curve(A)
+    {key = 'tip_armor_damage', text = 'Armor sets the damage you take: light armor <c=ffffe900>125%</c>, medium <c=ffffe900>100%</c>, heavy <c=ffffe900>75%</c>, heavy with EXTRA PADDING <c=ffffe900>65%</c>.'},
+    -- helldiver-fields.md zone.affects_main_health
+    {key = 'tip_hit_location', text = 'Where you are hit matters: head hits count <c=ffffe900>1.5x</c> against your health, chest hits <c=ffffe900>1x</c>, arm and leg hits only <c=ffffe900>0.85x</c>.'},
+    -- helldiver-fields.md speed_sprint(_exhausted); booster-authoring.md health_floor
+    {key = 'tip_sprint', text = 'Out of stamina you sprint at <c=ffffe900>4.25 m/s</c> instead of <c=ffffe900>5.5 m/s</c>. Dead Sprint keeps full speed by burning health, but never takes you below <c=ffffe900>5%</c>.'},
+    -- booster-authoring.md status 29: strength 1.1, duration 10, incoming_damage_scale 0.9
+    {key = 'tip_infusion', text = 'Experimental Infusion: for <c=ffffe900>10 s</c> after each stim you move <c=ffffe900>10%</c> faster and take <c=ffffe900>10%</c> less damage.'},
+    -- backpack-authoring.md armor rule 0x129C9F0; weapon-feeds.md
+    {key = 'tip_armor_rule', text = 'Penetration against armor: higher deals full damage, equal only <c=ffffe900>65%</c>, lower none. Light penetration is level <c=ffffe900>2</c>, Medium <c=ffffe900>3</c>, Heavy <c=ffffe900>4</c>.'},
+    -- EnemyAuthoring charger main 2400, constitution 750 at -100/s; body_rear 950 armor 0 x1.5 downs
+    {key = 'tip_charger_butt', text = 'A Charger has <c=ffffe900>2400</c> health. Its butt has no armor and <c=ffffe900>950</c> health, and hits there count <c=ffffe900>1.5x</c>; break it and the Charger bleeds out in <c=ffffe900>7.5 s</c>.'},
+    -- EnemyAuthoring strider main, inner_body, head
+    {key = 'tip_bile_titan', text = 'A Bile Titan has <c=ffffe900>6500</c> health. Its underside is only armor <c=ffffe900>2</c>, holds <c=ffffe900>4000</c> and kills it when destroyed; its head is armor <c=ffffe900>4</c> with <c=ffffe900>1500</c>.'},
+    -- EnemyAuthoring impaler head
+    {key = 'tip_impaler', text = 'An Impaler\'s head is only armor <c=ffffe900>1</c> with <c=ffffe900>1250</c> health, kills it when destroyed, and hits there count <c=ffffe900>1.5x</c> against its <c=ffffe900>4000</c> health.'},
+    -- True Intel 2-recon-1 log
+    {key = 'tip_operation_card', text = 'An operation\'s missions are all decided when it is created. Hover it on the galactic map to see every one; the next is in yellow.'},
+}
+
+---------------------------------------------------------------------------------------
 -- Configuration
 
 local NAME = 'True Intel'
@@ -430,6 +618,13 @@ local function init_native()
             .. '__asm__("ReadProcessMemory");',
         'int ti_WriteProcessMemory(void *process, void *address, const void *buffer, size_t size, size_t *written) '
             .. '__asm__("WriteProcessMemory");',
+        -- Read-only data pages (the tip lists, write_guarded below).
+        'typedef struct { void *base; void *allocation_base; uint32_t allocation_protect; uint16_t partition; '
+            .. 'size_t region_size; uint32_t state; uint32_t protect; uint32_t type; } ti_MEMORY_BASIC_INFORMATION;',
+        'size_t ti_VirtualQuery(const void *address, ti_MEMORY_BASIC_INFORMATION *info, size_t size) '
+            .. '__asm__("VirtualQuery");',
+        'int ti_VirtualProtect(void *address, size_t size, uint32_t protect, uint32_t *old) __asm__("VirtualProtect");',
+        'uint32_t ti_GetLastError(void) __asm__("GetLastError");',
     }) do pcall(ffi.cdef, decl) end
     local ok, k32 = pcall(ffi.load, 'kernel32')
     if not ok then return false, 'kernel32 unavailable' end
@@ -449,12 +644,53 @@ local function read(address, size)
     return ffi.string(buf, size)
 end
 
--- The only writes: a row's text id (the passive records are private read-write memory: HD2Runtime's perk editor
--- writes the same rows' values). A refused write is logged and the line left the game's; nothing is ever unlocked.
+-- The writes: a row's text id (the passive records are private read-write memory: HD2Runtime's perk editor writes
+-- the same rows' values) and the tip lists' text ids. A refused write is logged and the game's text kept.
 local function write(address, bytes)
     local got = ffi.new('size_t[1]')
     local ok = native.k32.ti_WriteProcessMemory(native.process, ffi.cast('void *', address), bytes, #bytes, got)
     return ok ~= 0 and tonumber(got[0]) == #bytes
+end
+
+-- A page's protection (PAGE_* flags) and state, or nil.
+local PAGE = {size = 4096, readonly = 0x02, readwrite = 0x04, writecopy = 0x08, committed = 0x1000}
+local function page_protection(address)
+    local info = ffi.new('ti_MEMORY_BASIC_INFORMATION')
+    if native.k32.ti_VirtualQuery(ffi.cast('void *', address), info, ffi.sizeof(info)) == 0 then return nil end
+    return tonumber(info.protect), tonumber(info.state)
+end
+
+-- Most of game.dll's tip lists sit in read-only data pages, where WriteProcessMemory fails. Then each page the write
+-- covers is made read-write for the write and put back, as Helmet Passives Reborn's Extended Pickup Icon Range does
+-- for the game's data tables. Only committed PAGE_READONLY pages: never code, never anything else. True, or nil and
+-- why.
+local function write_guarded(address, bytes)
+    if write(address, bytes) then return true end
+    local k32, old = native.k32, ffi.new('uint32_t[1]')
+    local pages, page = {}, address - address % PAGE.size
+    while page < address + #bytes do
+        local protect, state = page_protection(page)
+        if not protect then return nil, string.format('page %X: VirtualQuery failed', page) end
+        if state ~= PAGE.committed or protect ~= PAGE.readonly then
+            return nil, string.format('page %X: protection %X, state %X (only read-only data is unlocked)', page,
+                                      protect, state)
+        end
+        pages[#pages + 1] = page
+        page = page + PAGE.size
+    end
+    local opened, why = {}, nil
+    for _, pg in ipairs(pages) do
+        if k32.ti_VirtualProtect(ffi.cast('void *', pg), PAGE.size, PAGE.readwrite, old) == 0 then
+            why = string.format('page %X: VirtualProtect failed (error %d)', pg, tonumber(k32.ti_GetLastError()))
+            break
+        end
+        opened[#opened + 1] = pg
+    end
+    local wrote = not why and write(address, bytes)
+    for _, pg in ipairs(opened) do k32.ti_VirtualProtect(ffi.cast('void *', pg), PAGE.size, PAGE.readonly, old) end
+    if why then return nil, why end
+    if not wrote then return nil, string.format('%X: the write failed on a read-write page', address) end
+    return true
 end
 
 -- Plain Lua decoding (hd2-lua-mod skill 6.36: no FFI type punning in loops).
@@ -554,6 +790,9 @@ end
 -- language), key, handle, id, state}.
 local lines = {state = 'waiting', why = nil, retry_at = 0, tries = 0, rows_at = 0, text_at = 0, texts = nil,
                adapter = nil, text_misses = 0, text_lost_at = nil, list = {}, ours = {}, changed = {}, scale = nil}
+-- The loading screen tips (below) share our text table: their texts are defined with the lines' and their lists
+-- follow the lines' state (ours while our texts are registered, else the game's).
+local tips_define, tips_sync
 
 -- The passive tables (the customization manager): {manager, count, records (id -> address)}, or nil, why and whether
 -- the tables are wrong (not just not there yet). Helmet Passives Reborn adds records (39): any count is read.
@@ -724,6 +963,7 @@ local function define_texts(t)
         L.id = u32(t.id_bytes(L.handle))
         lines.ours[L.id] = true
     end
+    tips_define(t)
 end
 
 -- Codes from HD2Runtime's ensure that pass (the registry not ready, or changed under it): tried again. The language
@@ -779,6 +1019,7 @@ local function swap_all(why)
         note(string.format('Rows (%s): %d written, %d already set, %d held by something else, %d failed', why,
                            s.written, s.same, s.foreign, s.failed))
     end
+    tips_sync(why)
     return s
 end
 
@@ -910,12 +1151,716 @@ local function lines_describe()
 end
 
 ---------------------------------------------------------------------------------------
+-- Operation intel probe (2-recon-1: read-only, logs only; nothing is shown or written)
+-- The client makes every mission of an operation itself and sends them all to the backend in Operation/Create
+-- (0x12BF770), so an operation record should list all its missions while the game shows only the current one
+-- (RESEARCH.md "Operations and missions"). The probe logs what the records hold, so the log can be compared with the
+-- missions the game reveals as they are played. Signatures give the board, the records and the rows; the fields below
+-- are offline research the logs check:
+-- - operation record: +4 id, +0xC seed, +0x10 planet (u16), +0x1C type, +0x20 difficulty (u8), +0x24 race, +0x38
+--   settings index, +0x54 the states' count (u8);
+-- - mission row: +0x28 its operation's index, +0x30 the definition's index, +0x34 seed, +0x38 state (0 hidden, 1-2
+--   open, 3 done, by the code that reads it), +0x3C id, +0x44 its index in the operation;
+-- - definition: +0 mission id (HD2Runtime's catalogue key), +8 faction, +0x340 name text id, +0x344 description;
+-- - the map's mission descriptor (Know Your Constellation): board + 0x4168D0, the card's mission type (u16) at +26.
+local OPS = {every = 1, most_rows = 1024, most_defs = 1024, map = 15, descriptor = 0x4168D0, descriptor_type = 26,
+             def_faction = 8, def_name = 0x340, def_desc = 0x344, most_errors = 5}
+local ROW = {op = 0x28, def = 0x30, seed = 0x34, state = 0x38, id = 0x3C, index = 0x44}
+local FACTIONS = {[2] = 'Terminids', [3] = 'Automatons', [4] = 'Illuminate'}
+local PROBE_NEEDS = {'board', 'operations', 'op_record', 'op_max', 'op_active', 'op_mission_count', 'op_mission_rows',
+                     'op_mission_states', 'mission_rows', 'mission_row_count', 'mission_row', 'mission_type',
+                     'definitions', 'definition_size', 'definition_count'}
+-- Test key: a Mod Bindings Menu binding (1-recon-1's id, so no new reservation), else F6.
+local MARK = {id = 'alomare.true_stats.mark', label = 'True Intel Test: Mark', key = 'f6'}
+
+-- state: off (signatures missing), on, stopped (repeated errors). defs: {index = {id, faction, name, desc}}.
+-- seen: each active operation's last raw bytes, by index; logged: every summary logged, by index.
+local probe = {state = 'off', why = nil, at = 0, defs = nil, seen = {}, errors = 0, selected = nil, screen = nil,
+               marks = 0, key = {registered = false, down = false, fallback = false}}
+
+local function u8(blob, offset) return blob:byte(offset + 1) end
+local function u16(blob, offset) local a, b = blob:byte(offset + 1, offset + 2); return a + 256 * b end
+local function hex(blob) return (blob:gsub('.', function(c) return string.format('%02x', c:byte()) end)) end
+
+local function probe_start()
+    local missing = {}
+    for _, k in ipairs(PROBE_NEEDS) do
+        if not V[k] then missing[#missing + 1] = k end
+    end
+    if #missing > 0 then
+        probe.state, probe.why = 'off', 'signatures missing: ' .. table.concat(missing, ', ')
+        note('Operation probe off: ' .. probe.why)
+        return
+    end
+    probe.state = 'on'
+    note(string.format('Operation probe on: board [0x%X], %d records of 0x%X at +0x%X, rows at +0x%X (count +0x%X, '
+                       .. '0x%X each), definitions 0x%X (%d of 0x%X); selected +0x%s, presenters %s',
+                       V.board, V.op_max, V.op_record, V.operations, V.mission_rows, V.mission_row_count,
+                       V.mission_row, V.definitions, V.definition_count, V.definition_size,
+                       V.op_selected and string.format('%X', V.op_selected) or '?',
+                       V.ui and string.format('[0x%X] +0x%X', V.ui, V.presenters) or '?'))
+end
+
+-- The mission definitions, once they hold ids (filled at start-up): true, or nil and why.
+local function load_definitions()
+    if probe.defs then return true end
+    local n = V.definition_count
+    if n < 1 or n > OPS.most_defs then return nil, 'definition count ' .. n end
+    local blob = read(native.base + V.definitions, n * V.definition_size)
+    if not blob then return nil, 'definitions unreadable' end
+    local defs, factions = {}, {}
+    for i = 0, n - 1 do
+        local at = i * V.definition_size
+        local d = {id = u32(blob, at), faction = u32(blob, at + OPS.def_faction), name = u32(blob, at + OPS.def_name),
+                   desc = u32(blob, at + OPS.def_desc)}
+        if d.id == 0 then return nil, 'definition ' .. i .. ' has no id yet' end
+        defs[i] = d
+        factions[d.faction] = (factions[d.faction] or 0) + 1
+    end
+    probe.defs = defs
+    local f = {}
+    for k, c in pairs(factions) do f[#f + 1] = string.format('%s %d', FACTIONS[k] or ('faction ' .. k), c) end
+    table.sort(f)
+    note(string.format('Mission definitions: %d (%s)', n, table.concat(f, ', ')))
+    return true
+end
+
+-- The game's text of a text id in its current language (HD2Runtime's hd2.text.game), or '?' and why.
+local function game_name(id)
+    local text = runtime.hd2 and runtime.hd2.text
+    if type(text) ~= 'table' or type(text.game) ~= 'function' then return '? (no hd2.text.game)' end
+    local ok, s, code = pcall(text.game, id)
+    if ok and type(s) == 'string' then return s end
+    return '? (' .. tostring(ok and code or s) .. ')'
+end
+
+local function definition_text(index)
+    local d = probe.defs and probe.defs[index]
+    if not d then return string.format('definition %d unknown', index) end
+    return string.format('def %d %08x %s "%s"', index, d.id, FACTIONS[d.faction] or ('faction ' .. d.faction),
+                         game_name(d.name))
+end
+
+-- The board and its tables now: {board, ops (blob), count (rows), rows (blob)}, or nil and why.
+local function board_now()
+    local board = read_pointer(native.base + V.board)
+    if not board then return nil, 'no mission board yet' end
+    local ops = read(board + V.operations, V.op_max * V.op_record)
+    local count = read32(board + V.mission_rows + V.mission_row_count)
+    if not ops or not count then return nil, 'board unreadable' end
+    if count > OPS.most_rows then return nil, 'mission row count ' .. count end
+    local rows = count > 0 and read(board + V.mission_rows, count * V.mission_row) or ''
+    if not rows then return nil, 'mission rows unreadable' end
+    return {board = board, ops = ops, count = count, rows = rows}
+end
+
+local function row_blob(b, r) return b.rows:sub(r * V.mission_row + 1, (r + 1) * V.mission_row) end
+
+-- Operation i's raw bytes (its record and its mission rows) and its decoded summary.
+local function operation_raw(b, i)
+    local rec = b.ops:sub(i * V.op_record + 1, (i + 1) * V.op_record)
+    local parts = {rec}
+    for k = 0, math.min(u8(rec, V.op_mission_count), 8) - 1 do
+        local r = u8(rec, V.op_mission_rows + k)
+        parts[#parts + 1] = r < b.count and row_blob(b, r) or '-'
+    end
+    return rec, table.concat(parts)
+end
+
+local function operation_text(b, i, rec)
+    local n = u8(rec, V.op_mission_count)
+    local out = {string.format('op #%d id %d planet %d type %d difficulty %d race %d settings %d seed %08x: %d missions',
+                               i, u32(rec, 4), u16(rec, 0x10), u32(rec, 0x1C), u8(rec, 0x20), u32(rec, 0x24),
+                               u32(rec, 0x38), u32(rec, 0xC), n)}
+    local states = {}
+    for k = 0, math.min(u8(rec, 0x54), 8) - 1 do states[#states + 1] = tostring(u32(rec, V.op_mission_states + 4 * k)) end
+    out[1] = out[1] .. ', record states {' .. table.concat(states, ' ') .. '}'
+    for k = 0, math.min(n, 8) - 1 do
+        local r = u8(rec, V.op_mission_rows + k)
+        if r >= b.count then
+            out[#out + 1] = string.format('  mission %d: row %d outside the table (%d rows)', k + 1, r, b.count)
+        else
+            local row = row_blob(b, r)
+            local def = u32(row, ROW.def)
+            out[#out + 1] = string.format('  mission %d: row %d, %s, state %d, type %d, index %d, op %d, id %d, seed %08x',
+                                          k + 1, r, definition_text(def), u32(row, ROW.state), u32(row, V.mission_type),
+                                          u32(row, ROW.index), u32(row, ROW.op), u32(row, ROW.id), u32(row, ROW.seed))
+        end
+    end
+    return table.concat(out, '\n')
+end
+
+-- The top presenter (15 = the galactic map), or nil.
+local function screen_now()
+    if not V.ui then return nil end
+    local ui = read_pointer(native.base + V.ui)
+    local s = ui and read(ui + V.presenters, V.depth + 4)
+    if not s then return nil end
+    local n = u32(s, V.depth)
+    if n < 1 or n > 5 then return 0 end
+    return u32(s, V.stack + 4 * (n - 1))
+end
+
+local function log_operation(b, i, why)
+    local rec, raw = operation_raw(b, i)
+    note(why .. ' ' .. operation_text(b, i, rec))
+    note('  raw ' .. hex(raw))
+end
+
+local function probe_mark(b)
+    probe.marks = probe.marks + 1
+    note(string.format('MARK %d: screen %s, selected %s, board 0x%X, %d mission rows', probe.marks,
+                       tostring(screen_now()), tostring(probe.selected), b.board, b.count))
+    for i = 0, V.op_max - 1 do
+        if u8(b.ops, i * V.op_record + V.op_active) ~= 0 then log_operation(b, i, 'Mark') end
+    end
+    for r = 0, b.count - 1 do
+        local row = row_blob(b, r)
+        note(string.format('  row %d: %s, state %d, op %d, index %d | %s', r, definition_text(u32(row, ROW.def)),
+                           u32(row, ROW.state), u32(row, ROW.op), u32(row, ROW.index), hex(row)))
+    end
+    if V.op_selected then
+        local d = read(b.board + OPS.descriptor, 200)
+        if d then note('  map descriptor: mission type ' .. u16(d, OPS.descriptor_type) .. ' | ' .. hex(d)) end
+    end
+end
+
+-- Mark's key edge: Mod Bindings Menu's binding or F6, whichever is down.
+local function mark_pressed()
+    local menu = rawget(_G, 'ModBindingsMenu')
+    local down = nil
+    if type(menu) == 'table' and menu.api == 1 then
+        if not probe.key.registered then
+            probe.key.registered = true
+            -- Test keys prefer native bindings (MODS tab; Mod Bindings Menu's MORE MODS tab is unresponsive for now): the
+            -- menu makes one extended (v2.3+) only when its 36 native actions are taken, and `default` (its F-key) applies
+            -- then. The F-key works either way.
+            local ok, res, why = pcall(menu.register_binding, MARK.id, MARK.label, nil,
+                                       {category = NAME .. ' (test)', default = MARK.key})
+            probe.key.refused = not (ok and res)
+            note('Mod Bindings Menu binding ' .. MARK.id .. ': ' .. ((ok and res) and 'registered'
+                 or ('not registered (' .. tostring(ok and why or res) .. ')')) .. '; F6 works too')
+        end
+        local ok, d = pcall(menu.is_down, MARK.id)
+        if ok and type(d) == 'boolean' and not probe.key.refused then down = d end
+    end
+    if not down then
+        local kb = rawget(_G, 'stingray') and stingray.Keyboard
+        if type(kb) == 'table' then
+            local okid, id = pcall(kb.button_id, MARK.key)
+            local okd, d = false, nil
+            if okid and type(id) == 'number' then okd, d = pcall(kb.button, id) end
+            down = okd and type(d) == 'number' and d > 0.5 or false
+        end
+    end
+    local edge = down and not probe.key.down
+    probe.key.down = down and true or false
+    return edge
+end
+
+local function probe_step()
+    if probe.state ~= 'on' then return end
+    local mark = mark_pressed()
+    if M.time < probe.at and not mark then return end
+    probe.at = M.time + OPS.every
+    if not probe.defs then
+        local ok, why = load_definitions()
+        if not ok then note_change('defs', 'Mission definitions not ready: ' .. why) end
+    end
+    local b, why = board_now()
+    if not b then
+        note_change('board', 'Operation probe: ' .. why)
+        return
+    end
+    note_change('board', string.format('Operation probe: board 0x%X, %d mission rows', b.board, b.count))
+    local screen = screen_now()  -- its changes are logged every frame (the screen watch, below)
+    -- Every active operation: logged when it appears or its record or rows change, and when it goes.
+    for i = 0, V.op_max - 1 do
+        local active = u8(b.ops, i * V.op_record + V.op_active) ~= 0
+        if active then
+            local _, raw = operation_raw(b, i)
+            if probe.seen[i] ~= raw then
+                log_operation(b, i, probe.seen[i] and 'Changed' or 'Operation')
+                probe.seen[i], probe.dirty = raw, true
+            end
+        elseif probe.seen[i] then
+            note(string.format('Operation #%d gone', i))
+            probe.seen[i], probe.dirty = nil, true
+        end
+    end
+    -- The selected (hovered) operation and the card's descriptor.
+    if V.op_selected then
+        local sel = read32(b.board + V.op_selected)
+        if sel ~= probe.selected then
+            probe.selected = sel
+            local d = read(b.board + OPS.descriptor, 200)
+            local card = d and u16(d, OPS.descriptor_type)
+            local line = string.format('Selected operation %s on screen %s; map descriptor mission type %s',
+                                       sel == 0xFFFFFFFF and 'none' or ('#' .. tostring(sel)), tostring(screen),
+                                       card and (card .. ' (' .. definition_text(card) .. ')') or '?')
+            note(line)
+            if sel and sel < V.op_max and u8(b.ops, sel * V.op_record + V.op_active) ~= 0 then
+                note('  ' .. operation_text(b, sel, b.ops:sub(sel * V.op_record + 1, (sel + 1) * V.op_record)):gsub('\n', '\n  '))
+            end
+        end
+    end
+    if mark then
+        probe_mark(b)
+        probe.dirty, probe.marked = true, true
+    end
+end
+
+local function probe_describe()
+    if probe.state ~= 'on' then return probe.state .. (probe.why and (' (' .. probe.why .. ')') or '') end
+    local n = 0
+    for _ in pairs(probe.seen) do n = n + 1 end
+    return string.format('on: %d operations watched, %d marks', n, probe.marks)
+end
+
+-- One part's step under its own error count: repeated errors stop that part alone (the armor lines go on).
+local function run_part(part, step, label)
+    local ok, err = xpcall(step, debug.traceback)
+    if ok then return end
+    part.errors = (part.errors or 0) + 1
+    note(label .. ' error: ' .. tostring(err))
+    if part.errors >= OPS.most_errors then
+        part.state, part.why, probe.dirty = 'stopped', 'repeated errors', true
+        note(label .. ' stopped after repeated errors')
+    end
+end
+
+---------------------------------------------------------------------------------------
+-- Loading screen tips (2-recon-2)
+-- The game's tips are a list of 82 text ids (VANILLA_TIPS) in game.dll, 18 copies in this build: 17 in read-only
+-- data and one in writable data (RESEARCH.md "Loading screen tips"). No code addresses any copy directly, so which
+-- one the loading screens read is what this recon finds out: the writable copy points at our tips, and every slot of
+-- read-only copy k points at a test text naming it ("list copy k"), so the tip shown names the copy the game reads.
+-- The copies are found by the list's first ids in game.dll's non-code sections, a chunk a frame, at the start.
+local TIPS = {chunk = 0x100000, head = 4, most_copies = 24}
+-- every_slot: a recon build fills every slot, so one loading screen names the copy the game reads; a release takes
+-- only the jokes' slots (TIP_JOKES: the author, "aim to replace the jokes") and the game's real advice stays.
+local tips = {state = 'searching', why = nil, sections = nil, section = 1, offset = 0, seen = {}, found = {},
+              copies = nil, vanilla = nil, ours = nil, tags = nil, texts = {}, written = false, errors = 0,
+              every_slot = M.version:find('recon', 1, true) ~= nil}
+
+-- game.dll's readable non-code sections: {rva, size, writable}, or nil.
+local function data_sections()
+    local dos = read(native.base, 0x40)
+    local pe = dos and dos:sub(1, 2) == 'MZ' and u32(dos, 0x3C)
+    local nt = pe and pe < 0x10000 and read(native.base + pe, 0x18)
+    if not nt or nt:sub(1, 4) ~= 'PE\0\0' then return nil end
+    local count, opt = u16(nt, 6), u16(nt, 20)
+    local headers = count <= 96 and read(native.base + pe + 24 + opt, count * 40)
+    if not headers then return nil end
+    local out = {}
+    for i = 0, count - 1 do
+        local size, rva, flags = u32(headers, i * 40 + 8), u32(headers, i * 40 + 12), u32(headers, i * 40 + 36)
+        local exec, readable = math.floor(flags / 0x20000000) % 2 == 1, math.floor(flags / 0x40000000) % 2 == 1
+        if size > 0 and readable and not exec then
+            out[#out + 1] = {rva = rva, size = size, writable = flags >= 0x80000000}
+        end
+    end
+    return out
+end
+
+local function tips_off(why)
+    tips.state, tips.why, probe.dirty = 'off', why, true
+    note('Tips off: ' .. why .. ' (the game\'s tips stay)')
+end
+
+-- The search's end: every whole copy, with its page protection.
+local function tips_found()
+    local copies, parts = {}, {}
+    table.sort(tips.found, function(a, b) return a.rva < b.rva end)
+    for _, c in ipairs(tips.found) do
+        if read(native.base + c.rva, #tips.vanilla) == tips.vanilla and #copies < TIPS.most_copies then
+            c.protect = page_protection(native.base + c.rva)
+            copies[#copies + 1] = c
+            parts[#parts + 1] = string.format('%d +0x%X (%s, protection %s)', #copies, c.rva,
+                                              c.writable and 'writable data' or 'read-only data',
+                                              c.protect and string.format('%X', c.protect) or '?')
+        else
+            note(string.format('Tips: the list\'s first ids at +0x%X, but not the whole list: skipped', c.rva))
+        end
+    end
+    if #copies == 0 then return tips_off('the game\'s tip list not found (its tips changed?)') end
+    tips.copies, tips.state, probe.dirty = copies, 'found', true
+    note(string.format('Tips: %d copies of the game\'s %d tips in game.dll: %s', #copies, #VANILLA_TIPS,
+                       table.concat(parts, '; ')))
+    tips_sync('found')
+end
+
+local function tips_search_step()
+    if not tips.sections then
+        local parts = {}
+        for i, id in ipairs(VANILLA_TIPS) do parts[i] = u32_bytes(id) end
+        tips.vanilla = table.concat(parts)
+        tips.head = tips.vanilla:sub(1, TIPS.head * 4)
+        tips.sections = data_sections()
+        if not tips.sections then return tips_off('game.dll\'s sections unreadable') end
+    end
+    local s = tips.sections[tips.section]
+    if not s then return tips_found() end
+    local blob = read(native.base + s.rva + tips.offset, math.min(TIPS.chunk + 16, s.size - tips.offset))
+    if blob then  -- an unreadable chunk is skipped
+        local init = 1
+        while true do
+            local at = blob:find(tips.head, init, true)
+            if not at then break end
+            local rva = s.rva + tips.offset + at - 1
+            if rva % 4 == 0 and not tips.seen[rva] then
+                tips.seen[rva] = true
+                tips.found[#tips.found + 1] = {rva = rva, writable = s.writable}
+            end
+            init = at + 1
+        end
+    end
+    tips.offset = tips.offset + TIPS.chunk
+    if tips.offset >= s.size then tips.section, tips.offset = tips.section + 1, 0 end
+end
+
+-- Our tips and the copies' test texts as HD2Runtime handles (English only: every language shows the default).
+tips_define = function(t)
+    tips.ours, tips.tags = {}, {}
+    for _, tip in ipairs(OUR_TIPS) do
+        local id = u32(t.id_bytes(t.handle(tip.key, {default = tip.text}, MOD_ID)))
+        tips.ours[#tips.ours + 1] = id
+        tips.texts[id] = tip.text
+    end
+    for k = 1, TIPS.most_copies do
+        local text = string.format('True Intel test tip: list copy %d. Please write this number in TESTING.md.', k)
+        local id = u32(t.id_bytes(t.handle('tip_test_copy_' .. k, {default = text}, MOD_ID)))
+        tips.tags[k] = id
+        tips.texts[id] = text
+    end
+end
+
+-- What copy k holds while ours: in each slot we take (every slot, or the jokes'), the writable copy our tips in
+-- turn, a read-only copy its test text; the other slots keep the game's tip.
+local function tips_list(k, c)
+    if c.ours then return c.ours end
+    local parts, n = {}, 0
+    for i, id in ipairs(VANILLA_TIPS) do
+        if tips.every_slot or TIP_JOKES[id] then
+            n = n + 1
+            id = c.writable and tips.ours[(n - 1) % #tips.ours + 1] or tips.tags[k]
+        end
+        parts[i] = u32_bytes(id)
+    end
+    c.ours = table.concat(parts)
+    return c.ours
+end
+
+-- Every copy to the list it should hold: ours while our texts are registered, else the game's (a copy someone else
+-- changed is left alone).
+tips_sync = function(why)
+    if tips.state ~= 'found' or not tips.ours then return end
+    local ours = lines.state == 'applied'
+    local s, problems = {written = 0, same = 0, foreign = 0, failed = 0}, {}
+    for k, c in ipairs(tips.copies) do
+        local want, mine = ours and tips_list(k, c) or tips.vanilla, tips_list(k, c)
+        local now = read(native.base + c.rva, #want)
+        if now == want then
+            s.same = s.same + 1
+        elseif now ~= tips.vanilla and now ~= mine then
+            s.foreign = s.foreign + 1
+            problems[#problems + 1] = string.format('copy %d held by something else', k)
+        else
+            local ok, wwhy = write_guarded(native.base + c.rva, want)
+            if ok and read(native.base + c.rva, #want) == want then
+                s.written = s.written + 1
+            else
+                s.failed = s.failed + 1
+                problems[#problems + 1] = string.format('copy %d: %s', k, tostring(wwhy or 'read back differs'))
+            end
+        end
+    end
+    tips.written = ours and s.same + s.written == #tips.copies
+    if s.written > 0 or s.failed > 0 or s.foreign > 0 then
+        probe.dirty = true
+        note(string.format('Tips (%s): %d lists now %s, %d already, %d held by something else, %d failed%s', why,
+                           s.written, ours and 'ours' or 'the game\'s', s.same, s.foreign, s.failed,
+                           #problems > 0 and (' (' .. table.concat(problems, '; ') .. ')') or ''))
+    end
+end
+
+local function tips_describe()
+    if tips.state ~= 'found' then return tips.state .. (tips.why and (' (' .. tips.why .. ')') or '') end
+    return string.format('%d copies, %s', #tips.copies, tips.written and 'ours' or 'the game\'s')
+end
+
+---------------------------------------------------------------------------------------
+-- The screen watch (2-recon-2): which loading screens the game shows and whether this script runs during them
+-- The top presenter every frame (2 LoadingMission, 3 LoadingShip, 15 the galactic map: Impatient Diver's names),
+-- long frames, and the UI manager's screens ({pointer, type} rows, One Click Armor Set's layout). On a loading
+-- presenter, a long frame or Mark, the screens' memory is searched for every tip's text id (the game's, ours and the
+-- test texts): where a shown tip lives if the game copied its list at start-up.
+local SCREENS = {count = 0x166C, rows = 0x1670, row_size = 16, most = 64, every = 0.5, gap = 0.5,
+                 scan_bytes = 0x200000, read = 0x40000, reads = 4, most_scans = 12, most_hits = 24}
+local PRESENTERS = {[2] = 'loading a mission', [3] = 'loading the ship', [14] = 'briefing', [15] = 'galactic map'}
+local watch = {state = 'on', screen = false, rows_at = 0, wall = nil, scan = nil, scans = 0, errors = 0,
+               buffer = nil, tip_ids = nil}
+
+-- The UI manager's screens: {{at, type}}, or nil.
+local function screens_now()
+    if not V.ui_manager then return nil end
+    local m = read_pointer(native.base + V.ui_manager)
+    local head = m and read(m + SCREENS.count, 4 + SCREENS.most * SCREENS.row_size)
+    if not head then return nil end
+    local n = math.min(u32(head, 0), SCREENS.most)
+    local out = {}
+    for i = 0, n - 1 do
+        local at = pointer(head, 4 + i * SCREENS.row_size)
+        if at then out[#out + 1] = {at = at, type = u32(head, 4 + i * SCREENS.row_size + 8)} end
+    end
+    return out
+end
+
+local function scan_start(why)
+    if watch.scan or watch.scans >= SCREENS.most_scans then return end
+    local rows = screens_now()
+    if not rows or #rows == 0 then return note('Tip scan (' .. why .. '): no UI screens') end
+    if not watch.tip_ids then
+        watch.tip_ids = {}
+        for _, id in ipairs(VANILLA_TIPS) do watch.tip_ids[id] = 'the game\'s' end
+        for id in pairs(tips.texts) do watch.tip_ids[id] = 'ours' end
+        watch.buffer = ffi.new('uint8_t[?]', SCREENS.read)
+    end
+    watch.scans = watch.scans + 1
+    watch.scan = {rows = rows, row = 1, offset = 0, hits = 0, why = why, n = watch.scans}
+    note(string.format('Tip scan %d (%s, presenter %s): %d screens', watch.scans, why, tostring(watch.screen), #rows))
+end
+
+local function scan_step()
+    local sc, k32 = watch.scan, native.k32
+    local got = ffi.new('size_t[1]')
+    for _ = 1, SCREENS.reads do
+        local r = sc.rows[sc.row]
+        if not r then
+            note(string.format('Tip scan %d: done, %d hits', sc.n, sc.hits))
+            watch.scan = nil
+            return
+        end
+        local ok = k32.ti_ReadProcessMemory(native.process, ffi.cast('const void *', r.at + sc.offset), watch.buffer,
+                                            SCREENS.read, got) ~= 0 and tonumber(got[0]) == SCREENS.read
+        if ok then
+            local p = ffi.cast('const uint32_t *', watch.buffer)
+            for i = 0, SCREENS.read / 4 - 1 do
+                local whose = watch.tip_ids[p[i]]
+                if whose and sc.hits < SCREENS.most_hits then
+                    sc.hits = sc.hits + 1
+                    local off = sc.offset + i * 4
+                    local id = tonumber(p[i])
+                    local w = r.at + off - (V.label_text_id or 0x110)
+                    local args = read(w + (V.label_arg_count or 0x268), 1)
+                    note(string.format('Tip scan %d: screen type %d +0x%X holds %s tip %08X "%s"; as a label at '
+                                       .. '+0x%X: %s arguments', sc.n, r.type, off, whose, id,
+                                       (tips.texts[id] or game_name(id)):sub(1, 60), off - (V.label_text_id or 0x110),
+                                       args and tostring(args:byte(1)) or '?'))
+                end
+            end
+        end
+        sc.offset = sc.offset + SCREENS.read
+        if not ok or sc.offset >= SCREENS.scan_bytes then sc.row, sc.offset = sc.row + 1, 0 end
+    end
+end
+
+local function watch_step(dt)
+    local screen = screen_now()
+    if screen ~= watch.screen then
+        watch.screen, probe.dirty = screen, true
+        note('Screen: presenter ' .. tostring(screen) .. (PRESENTERS[screen] and (' (' .. PRESENTERS[screen] .. ')') or ''))
+        if screen == 2 or screen == 3 then scan_start('loading presenter') end
+    end
+    local wall = type(os) == 'table' and type(os.time) == 'function' and os.time() or nil
+    local wall_gap = (wall and watch.wall) and wall - watch.wall or 0
+    if dt > SCREENS.gap or wall_gap >= 2 then
+        note(string.format('Frame gap: dt %.2f s, wall clock %d s (presenter %s)', dt, wall_gap, tostring(screen)))
+        scan_start('frame gap')
+    end
+    watch.wall = wall
+    if probe.marked then
+        probe.marked = false
+        scan_start('Mark')
+    end
+    if M.time - watch.rows_at >= SCREENS.every then
+        watch.rows_at = M.time
+        local rows = screens_now()
+        if rows then
+            local types = {}
+            for i, r in ipairs(rows) do types[i] = tostring(r.type) end
+            note_change('screens', 'Screens: ' .. #rows .. ' (types ' .. table.concat(types, ' ') .. ')')
+        end
+    end
+    if watch.scan then scan_step() end
+end
+
+---------------------------------------------------------------------------------------
+-- The operation card (2-recon-2): every mission of the hovered operation under the card's description
+-- The card's description is the text id at +0x2C of the operation's settings (a static table, 0x490 bytes per
+-- settings index, the record's +0x38; +0x24 its name), shown by a label inside the galactic map's operation frame
+-- (Know Your Constellation: the UI manager's map registry + 25224 = {count 1, owner +8, kind 226 +16}; the frame at
+-- owner + 349072). The label is found by its text id, then given the game's #COUNT template with a string argument:
+-- the description, then each mission's name in the game's text (the card's current one in yellow, done ones grey).
+-- When the game sets the card again (another operation) the label holds the game's id again and gets ours anew.
+local CARD = {settings = 0x32FEF10, settings_size = 0x490, most_settings = 64, desc = 0x2C, registry = 25224,
+              kind = 226, frame = 349072, scan = 0x90000, every = 0.1, most_args = 14, template = 0xC67C7FAF,
+              done = 3, next_color = 'ffffe900', done_color = 'ff8c8c8c', bullet = '\226\128\162 '}
+local CARD_NEEDS = {'ui_manager', 'label_text_id', 'label_arg_count', 'text_set_label', 'call_set_string_arg',
+                    'text_count_key'}
+local card = {state = 'off', why = nil, at = 0, owner = nil, offset = nil, searched = {}, key = nil, buffers = {},
+              desc = {}, calls = nil, shown = 0, errors = 0}
+
+local function card_start()
+    if probe.state ~= 'on' then
+        card.why = 'the operation probe is off'
+    else
+        local missing = {}
+        for _, k in ipairs(CARD_NEEDS) do
+            if not V[k] then missing[#missing + 1] = k end
+        end
+        if #missing > 0 then card.why = 'signatures missing: ' .. table.concat(missing, ', ') end
+    end
+    if card.why then return note('Card off: ' .. card.why) end
+    card.calls = {set_label = ffi.cast('void (*)(uint64_t, uint32_t)', native.base + V.text_set_label),
+                  set_string_arg = ffi.cast('void (*)(uint64_t, uint32_t, const char *)',
+                                            native.base + V.call_set_string_arg)}
+    card.state = 'on'
+    note(string.format('Card on: labels +0x%X (arguments +0x%X), set_label +0x%X, set_string_arg +0x%X',
+                       V.label_text_id, V.label_arg_count, V.text_set_label, V.call_set_string_arg))
+end
+
+local function shown(s) return s:sub(1, 1) ~= '?' end  -- game_name's failures start with '?'
+
+-- A settings index's description text id, or nil (once per index).
+local function settings_desc(index)
+    if card.desc[index] == nil then
+        local id = index < CARD.most_settings and read32(native.base + CARD.settings + index * CARD.settings_size
+                                                         + CARD.desc)
+        local text = id and id ~= 0 and game_name(id)
+        card.desc[index] = text and shown(text) and id or false
+        note(string.format('Card: settings %d: description %s "%s"', index, id and string.format('%08X', id) or '?',
+                           tostring(text)))
+    end
+    return card.desc[index] or nil
+end
+
+-- The map screen's owner (the operation frame's), or nil.
+local function map_owner()
+    local m = read_pointer(native.base + V.ui_manager)
+    local e = m and read(m + CARD.registry, 24)
+    if not e or u32(e, 0) ~= 1 or u32(e, 16) ~= CARD.kind then return nil end
+    return pointer(e, 8)
+end
+
+-- The description label's offset in the owner: the first label inside the operation frame holding desc (once per
+-- owner and description), or nil. Every hit is logged.
+local function find_description(owner, desc)
+    local key = string.format('%X:%08X', owner, desc)
+    if card.searched[key] then return nil end
+    card.searched[key] = true
+    local pattern, hits, chosen = u32_bytes(desc), {}, nil
+    for off = 0, CARD.scan - 1, 0x10000 do
+        local blob = read(owner + off, 0x10000)
+        local init = 1
+        while blob do
+            local at = blob:find(pattern, init, true)
+            if not at then break end
+            local o = off + at - 1 - V.label_text_id
+            if (at - 1) % 4 == 0 and o >= 0 then
+                local args = read(owner + o + V.label_arg_count, 1)
+                local n = args and args:byte(1)
+                hits[#hits + 1] = string.format('+0x%X (%s arguments)', o, tostring(n))
+                if not chosen and n and n <= CARD.most_args and o >= CARD.frame then chosen = o end
+            end
+            init = at + 1
+        end
+    end
+    note(string.format('Card: description %08X in the map screen at %s; the label used: %s', desc,
+                       #hits > 0 and table.concat(hits, ', ') or 'nowhere', chosen and string.format('+0x%X', chosen)
+                       or 'none'))
+    return chosen
+end
+
+-- The card's text: the description, then a line per mission. nil when a name is missing.
+local function card_text(b, rec, desc, current)
+    local d = game_name(desc)
+    if not shown(d) then return nil end
+    local out, n = {d}, math.min(u8(rec, V.op_mission_count), 8)
+    for k = 0, n - 1 do
+        local r = u8(rec, V.op_mission_rows + k)
+        if r >= b.count then return nil end
+        local row = row_blob(b, r)
+        local def = probe.defs and probe.defs[u32(row, ROW.def)]
+        local name = def and game_name(def.name)
+        if not name or not shown(name) then return nil end
+        if u32(row, ROW.state) == CARD.done then
+            name = '<c=' .. CARD.done_color .. '>' .. name .. '</c>'
+        elseif u32(row, ROW.seed) == current then
+            name = '<c=' .. CARD.next_color .. '>' .. name .. '</c>'
+        end
+        out[#out + 1] = CARD.bullet .. name
+    end
+    return table.concat(out, '\n'), n
+end
+
+local function card_step()
+    if M.time < card.at then return end
+    card.at = M.time + CARD.every
+    if screen_now() ~= OPS.map then return end
+    local b = board_now()
+    local sel = b and read32(b.board + V.op_selected)
+    if not sel or sel >= V.op_max then return end
+    local rec = b.ops:sub(sel * V.op_record + 1, (sel + 1) * V.op_record)
+    if u8(rec, V.op_active) == 0 then return end
+    local desc = settings_desc(u32(rec, 0x38))
+    local owner = desc and map_owner()
+    if not owner then return end
+    if owner ~= card.owner then card.owner, card.offset = owner, nil end
+    card.offset = card.offset or find_description(owner, desc)
+    if not card.offset then return end
+    local w = owner + card.offset
+    local label, args = read32(w + V.label_text_id), read(w + V.label_arg_count, 1)
+    if not label or not args or args:byte(1) > CARD.most_args then return end
+    local current = read32(b.board + OPS.descriptor)  -- the card's current mission's seed
+    local states = {}
+    for k = 0, math.min(u8(rec, V.op_mission_count), 8) - 1 do
+        local r = u8(rec, V.op_mission_rows + k)
+        states[#states + 1] = r < b.count and tostring(u32(row_blob(b, r), ROW.state)) or '-'
+    end
+    local key = string.format('%d %08x %08x %s', sel, u32(rec, 0xC), current or 0, table.concat(states, ' '))
+    if not (label == desc or (label == CARD.template and key ~= card.key)) then return end
+    local text, n = card_text(b, rec, desc, current)
+    if not text then return note_change('card text', 'Card: op #' .. sel .. ': a mission name is missing') end
+    local buffer = card.buffers[text]
+    if not buffer then
+        buffer = ffi.new('char[?]', #text + 1, text)
+        card.buffers[text] = buffer  -- kept: the label keeps the string's pointer
+    end
+    card.calls.set_label(w, CARD.template)
+    card.calls.set_string_arg(w, V.text_count_key, buffer)
+    card.key, card.shown, probe.dirty = key, card.shown + 1, true
+    note_change('card shown', string.format('Card: op #%d (%s) shows %d missions: %s', sel, key, n,
+                                            (text:gsub('\n', ' | '))))
+end
+
+local function card_describe()
+    if card.state ~= 'on' then return card.state .. (card.why and (' (' .. card.why .. ')') or '') end
+    return string.format('on: label %s, shown %d times', card.offset and string.format('+0x%X', card.offset)
+                         or 'not found yet', card.shown)
+end
+
+---------------------------------------------------------------------------------------
 -- Status
 
 local function update_status()
     status.details = {
         'HD2Runtime: ' .. (runtime.hd2 and tostring(runtime.hd2.version) or ('missing (' .. tostring(runtime.why) .. ')')),
         'Lines: ' .. lines_describe(),
+        'Operation probe: ' .. probe_describe(),
+        'Operation card: ' .. card_describe(),
+        'Tips: ' .. tips_describe(),
+        'Screen watch: ' .. watch.state .. string.format(', %d tip scans', watch.scans),
     }
     for _, L in ipairs(lines.list) do
         status.details[#status.details + 1] = string.format('  %s %s: %s', L.spec.name, L.key, tostring(L.state))
@@ -961,6 +1906,8 @@ local function start()
     elseif all then
         local okv, missing = finish_resolution()
         if not okv then return retire('NOT AVAILABLE - signatures missing: ' .. missing .. '; the game is unchanged') end
+        probe_start()
+        card_start()
     else
         note('Searching game.dll for moved code (game updated?)')
     end
@@ -974,13 +1921,23 @@ local function frame(dt)
     if not M.ready then
         if code.scan and code:step() then
             local okv, missing = finish_resolution()
-            if not okv then retire('NOT AVAILABLE - signatures missing: ' .. missing .. '; the game is unchanged') end
+            if not okv then return retire('NOT AVAILABLE - signatures missing: ' .. missing .. '; the game is unchanged') end
+            probe_start()
+            card_start()
         end
         return
     end
     local before = lines.state
     lines_step()
-    if lines.state ~= before or M.frames % 1800 == 0 then update_status() end
+    -- Each part's own errors stop that part alone (the armor lines go on).
+    if probe.state == 'on' then run_part(probe, probe_step, 'Operation probe') end
+    if tips.state == 'searching' then run_part(tips, tips_search_step, 'Tips') end
+    if watch.state == 'on' then run_part(watch, function() watch_step(dt) end, 'Screen watch') end
+    if card.state == 'on' then run_part(card, card_step, 'Operation card') end
+    if lines.state ~= before or probe.dirty or M.frames % 1800 == 0 then
+        probe.dirty = false
+        update_status()
+    end
 end
 
 local function guarded(step, where, ...)
@@ -1001,5 +1958,5 @@ update = function(dt, ...)
 end
 
 note(NAME .. ' V' .. M.version .. ' loaded')
-M._test = {lines = lines, signature_values = function() return V end}
+M._test = {lines = lines, probe = probe, tips = tips, card = card, watch = watch, signature_values = function() return V end}
 return M

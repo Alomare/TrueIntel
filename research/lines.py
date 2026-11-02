@@ -10,7 +10,7 @@ Inputs (the workspace's): FileDiver's plaintext mirror of the passive records
 (_shared/filediver/datalibrary/generated_customization_passive_bonuses.dl_bin, layout in passive_bonuses.go), the
 game's strings in its 15 languages (_research/equip_set/strings, *.strings.json: read here, never copied into the
 mod) and the mod's texts (locales/*.lua). Standard library only. The decoder is Helmet Passives Reborn's
-research/catalog.py (the author's own, GPL).
+research/catalog.py (the author's own, MIT).
 
 A line replaces one row's text id (row +0xC): the row's key, type and value stay untouched, so nothing the game uses
 changes. Three kinds, each number read live from the game's memory by the script (the values below are this build's):
